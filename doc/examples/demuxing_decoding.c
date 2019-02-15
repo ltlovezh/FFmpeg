@@ -266,7 +266,7 @@ int main (int argc, char **argv)
         fprintf(stderr, "Could not find stream information\n");
         exit(1);
     }
-
+    // 找出视频流的信息
     if (open_codec_context(&video_stream_idx, &video_dec_ctx, fmt_ctx, AVMEDIA_TYPE_VIDEO) >= 0) {
         video_stream = fmt_ctx->streams[video_stream_idx];
 
@@ -289,7 +289,7 @@ int main (int argc, char **argv)
         }
         video_dst_bufsize = ret;
     }
-
+    // 找出音频流的信息
     if (open_codec_context(&audio_stream_idx, &audio_dec_ctx, fmt_ctx, AVMEDIA_TYPE_AUDIO) >= 0) {
         audio_stream = fmt_ctx->streams[audio_stream_idx];
         audio_dst_file = fopen(audio_dst_filename, "wb");
