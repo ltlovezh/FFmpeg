@@ -39,11 +39,10 @@
 #define AUDIO_INBUF_SIZE 20480
 #define AUDIO_REFILL_THRESH 4096
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     const char *outfilename, *filename;
     const AVCodec *codec;
-    AVCodecContext *c= NULL;
+    AVCodecContext *c = NULL;
     int len;
     FILE *f, *outfile;
     uint8_t inbuf[AUDIO_INBUF_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
@@ -54,7 +53,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Usage: %s <input file> <output file>\n", argv[0]);
         exit(0);
     }
-    filename    = argv[1];
+    filename = argv[1];
     outfilename = argv[2];
 
     /* register all the codecs */
@@ -114,15 +113,17 @@ int main(int argc, char **argv)
         }
         if (got_frame) {
             /* if a frame has been decoded, output it */
+            // 一个采样点的字节数
             int data_size = av_get_bytes_per_sample(c->sample_fmt);
             if (data_size < 0) {
                 /* This should not occur, checking just for paranoia */
                 fprintf(stderr, "Failed to calculate data size\n");
                 exit(1);
             }
-            for (i=0; i<decoded_frame->nb_samples; i++)
-                for (ch=0; ch<c->channels; ch++)
-                    fwrite(decoded_frame->data[ch] + data_size*i, 1, data_size, outfile);
+            // TODO 为什么直接当成planar处理，哪里有设置吗
+            for (i = 0; i < decoded_frame->nb_samples; i++)
+                for (ch = 0; ch < c->channels; ch++)
+                    fwrite(decoded_frame->data[ch] + data_size * i, 1, data_size, outfile);
         }
         avpkt.size -= len;
         avpkt.data += len;
