@@ -1592,7 +1592,7 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
             av_log(s, AV_LOG_ERROR, "AAC packet too short\n");
             return AVERROR_INVALIDDATA;
         }
-        if ((AV_RB16(pkt->data) & 0xfff0) != 0xfff0) {
+        if ((AV_RB16(pkt->data) & 0xfff0) != 0xfff0) { // 前两个字节是0xfff0，则说明是adts头部，否则不包含adts头部
             int ret;
             AVPacket pkt2;
 

@@ -48,15 +48,16 @@ static int aac_adtstoasc_filter(AVBSFContext *bsfc, AVPacket *out)
     ret = ff_bsf_get_packet(bsfc, &in);
     if (ret < 0)
         return ret;
-
+    // 有extradata， 并且size >=2 说明有合法的ASC，而且没有adts头部，则直接完成
     if (bsfc->par_in->extradata && in->size >= 2 && (AV_RB16(in->data) >> 4) != 0xfff)
         goto finish;
 
+    // 音频帧小于7，太短了
     if (in->size < AAC_ADTS_HEADER_SIZE)
         goto packet_too_small;
 
     init_get_bits(&gb, in->data, AAC_ADTS_HEADER_SIZE * 8);
-
+    // 解析adts头部
     if (avpriv_aac_parse_header(&gb, &hdr) < 0) {
         av_log(bsfc, AV_LOG_ERROR, "Error parsing ADTS frame header!\n");
         ret = AVERROR_INVALIDDATA;
@@ -69,7 +70,7 @@ static int aac_adtstoasc_filter(AVBSFContext *bsfc, AVPacket *out)
         ret = AVERROR_PATCHWELCOME;
         goto fail;
     }
-
+    // 删除adts头部
     in->size -= AAC_ADTS_HEADER_SIZE + 2 * !hdr.crc_absent;
     if (in->size <= 0)
         goto packet_too_small;
@@ -102,7 +103,7 @@ static int aac_adtstoasc_filter(AVBSFContext *bsfc, AVPacket *out)
             ret = AVERROR(ENOMEM);
             goto fail;
         }
-
+        // 生成AudioSpecificConfig
         init_put_bits(&pb, extradata, 2 + pce_size);
         put_bits(&pb, 5, hdr.object_type);
         put_bits(&pb, 4, hdr.sampling_index);
@@ -117,7 +118,7 @@ static int aac_adtstoasc_filter(AVBSFContext *bsfc, AVPacket *out)
 
         bsfc->par_out->extradata = extradata;
         bsfc->par_out->extradata_size = 2 + pce_size;
-        ctx->first_frame_done = 1;
+        ctx->first_frame_done = 1; // 只提取一次AudioSpecificConfig
     }
 
 finish:

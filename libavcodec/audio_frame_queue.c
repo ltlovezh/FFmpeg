@@ -43,7 +43,7 @@ void ff_af_queue_close(AudioFrameQueue *afq)
 
 int ff_af_queue_add(AudioFrameQueue *afq, const AVFrame *f)
 {
-    AudioFrame *new = av_fast_realloc(afq->frames, &afq->frame_alloc, sizeof(*afq->frames)*(afq->frame_count+1));
+    AudioFrame *new = av_fast_realloc(afq->frames, &afq->frame_alloc, sizeof(*afq->frames)*(afq->frame_count+1)); // 分配能够存储afq->frame_count+1个AudioFrame的buffer
     if(!new)
         return AVERROR(ENOMEM);
     afq->frames = new;

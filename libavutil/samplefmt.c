@@ -120,7 +120,7 @@ int av_samples_get_buffer_size(int *linesize, int nb_channels, int nb_samples,
                                enum AVSampleFormat sample_fmt, int align)
 {
     int line_size;
-    int sample_size = av_get_bytes_per_sample(sample_fmt);
+    int sample_size = av_get_bytes_per_sample(sample_fmt); // 单个采样点字节数
     int planar      = av_sample_fmt_is_planar(sample_fmt);
 
     /* validate parameter ranges */
@@ -189,7 +189,7 @@ int av_samples_alloc(uint8_t **audio_data, int *linesize, int nb_channels,
         av_free(buf);
         return size;
     }
-
+    // 为audio_data设置默认值
     av_samples_set_silence(audio_data, 0, nb_samples, nb_channels, sample_fmt);
 
     return size;

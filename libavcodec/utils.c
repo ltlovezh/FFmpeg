@@ -1862,7 +1862,7 @@ int attribute_align_arg avcodec_encode_audio2(AVCodecContext *avctx,
             return AVERROR(ENOMEM);
 
         memcpy(extended_frame, frame, sizeof(AVFrame));
-        extended_frame->extended_data = extended_frame->data;
+        extended_frame->extended_data = extended_frame->data; // extended_data指向data
         frame = extended_frame;
     }
 
@@ -1873,7 +1873,7 @@ int attribute_align_arg avcodec_encode_audio2(AVCodecContext *avctx,
             avctx->audio_service_type = *(enum AVAudioServiceType*)sd->data;
     }
 
-    /* check for valid frame size */
+    /* check for valid frame size 检查frame->nb_samples */
     if (frame) {
         if (avctx->codec->capabilities & AV_CODEC_CAP_SMALL_LAST_FRAME) {
             if (frame->nb_samples > avctx->frame_size) {
@@ -1904,7 +1904,7 @@ int attribute_align_arg avcodec_encode_audio2(AVCodecContext *avctx,
 
     ret = avctx->codec->encode2(avctx, avpkt, frame, got_packet_ptr);
     if (!ret) {
-        if (*got_packet_ptr) {
+        if (*got_packet_ptr) { // 编码器返回0，且拿到了帧
             if (!(avctx->codec->capabilities & AV_CODEC_CAP_DELAY)) {
                 if (avpkt->pts == AV_NOPTS_VALUE)
                     avpkt->pts = frame->pts;
@@ -1913,7 +1913,7 @@ int attribute_align_arg avcodec_encode_audio2(AVCodecContext *avctx,
                                                               frame->nb_samples);
             }
             avpkt->dts = avpkt->pts;
-        } else {
+        } else { // 编码器返回0，且没有拿到帧
             avpkt->size = 0;
         }
     }
@@ -2390,7 +2390,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             av_assert0(ret <= tmp.size);
             frame->pkt_dts = avpkt->dts;
         }
-        if (ret >= 0 && *got_frame_ptr) {
+        if (ret >= 0 && *got_frame_ptr) { // 拿到了帧
             avctx->frame_number++;
             av_frame_set_best_effort_timestamp(frame,
                                                guess_correct_pts(avctx,
@@ -2842,9 +2842,9 @@ static int do_decode(AVCodecContext *avctx, AVPacket *pkt)
     if (ret < 0)
         return ret;
 
-    if (ret >= pkt->size) {
+    if (ret >= pkt->size) { // 全部消耗完了，则释放buffer_pkt
         av_packet_unref(avctx->internal->buffer_pkt);
-    } else {
+    } else { // 只消耗了一部分，则修改buffer_pkt的size值
         int consumed = ret;
 
         if (pkt != avctx->internal->buffer_pkt) {
@@ -2872,14 +2872,14 @@ int attribute_align_arg avcodec_send_packet(AVCodecContext *avctx, const AVPacke
     if (!avcodec_is_open(avctx) || !av_codec_is_decoder(avctx->codec))
         return AVERROR(EINVAL);
 
-    if (avctx->internal->draining)
+    if (avctx->internal->draining) // 若已经进入了flush状态，则不再接收输入帧
         return AVERROR_EOF;
 
     if (avpkt && !avpkt->size && avpkt->data)
         return AVERROR(EINVAL);
 
     if (!avpkt || !avpkt->size) {
-        avctx->internal->draining = 1;
+        avctx->internal->draining = 1; // 进入flush状态
         avpkt = NULL;
 
         if (!(avctx->codec->capabilities & AV_CODEC_CAP_DELAY))
@@ -2909,7 +2909,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
     // Emulation via old API. Assume avpkt is likely not refcounted, while
     // decoder output is always refcounted, and avoid copying.
-
+    // 之前输入的的AVPacket还有，不再接收新的输入，需要先拿出输出。
     if (avctx->internal->buffer_pkt->size || avctx->internal->buffer_frame->buf[0])
         return AVERROR(EAGAIN);
 
@@ -2944,7 +2944,8 @@ int attribute_align_arg avcodec_receive_frame(AVCodecContext *avctx, AVFrame *fr
 
     // Emulation via old API.
 
-    if (!avctx->internal->buffer_frame->buf[0]) {
+    if (!avctx->internal->buffer_frame->buf[0]) { // 没有可用的buffer_frame
+        // 没有可解码的数据了，则返回AVERROR(EAGAIN)，表示需要更多的输入数据
         if (!avctx->internal->buffer_pkt->size && !avctx->internal->draining)
             return AVERROR(EAGAIN);
 
@@ -2964,9 +2965,9 @@ int attribute_align_arg avcodec_receive_frame(AVCodecContext *avctx, AVFrame *fr
     }
 
     if (!avctx->internal->buffer_frame->buf[0])
-        return avctx->internal->draining ? AVERROR_EOF : AVERROR(EAGAIN);
+        return avctx->internal->draining ? AVERROR_EOF : AVERROR(EAGAIN); // 若已经flush了，则直接返回AVERROR_EOF， 否则返回AVERROR(EAGAIN)，表示需要更多的输入数据
 
-    av_frame_move_ref(frame, avctx->internal->buffer_frame);
+    av_frame_move_ref(frame, avctx->internal->buffer_frame); // avctx->internal->buffer_frame表示解码后的数据
     return 0;
 }
 
@@ -2976,7 +2977,7 @@ static int do_encode(AVCodecContext *avctx, const AVFrame *frame, int *got_packe
     *got_packet = 0;
 
     av_packet_unref(avctx->internal->buffer_pkt);
-    avctx->internal->buffer_pkt_valid = 0;
+    avctx->internal->buffer_pkt_valid = 0; // 编码前，重置为0，表示avctx->internal->buffer_pkt是非法的
 
     if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
         ret = avcodec_encode_video2(avctx, avctx->internal->buffer_pkt,
@@ -2988,11 +2989,11 @@ static int do_encode(AVCodecContext *avctx, const AVFrame *frame, int *got_packe
         ret = AVERROR(EINVAL);
     }
 
-    if (ret >= 0 && *got_packet) {
+    if (ret >= 0 && *got_packet) { // 成功拿到编码后的帧，且返回值>=0
         // Encoders must always return ref-counted buffers.
         // Side-data only packets have no data and can be not ref-counted.
         av_assert0(!avctx->internal->buffer_pkt->data || avctx->internal->buffer_pkt->buf);
-        avctx->internal->buffer_pkt_valid = 1;
+        avctx->internal->buffer_pkt_valid = 1; // 表示avctx->internal->buffer_pkt是合法的编码数据，可直接返回使用
         ret = 0;
     } else {
         av_packet_unref(avctx->internal->buffer_pkt);
@@ -3006,16 +3007,17 @@ int attribute_align_arg avcodec_send_frame(AVCodecContext *avctx, const AVFrame 
     if (!avcodec_is_open(avctx) || !av_codec_is_encoder(avctx->codec))
         return AVERROR(EINVAL);
 
+    // 如果已经是flush状态，则直接返回AVERROR_EOF
     if (avctx->internal->draining)
         return AVERROR_EOF;
 
-    if (!frame) {
+    if (!frame) { // null frame使编码器进入flush状态
         avctx->internal->draining = 1;
-
+        // 如果编码器不具备null frame flush的能力，则直接返回0（成功）
         if (!(avctx->codec->capabilities & AV_CODEC_CAP_DELAY))
             return 0;
     }
-
+    // 如果编码器提供了send_frame接口的实现，则优先走send_frame接口
     if (avctx->codec->send_frame)
         return avctx->codec->send_frame(avctx, frame);
 
@@ -3025,6 +3027,7 @@ int attribute_align_arg avcodec_send_frame(AVCodecContext *avctx, const AVFrame 
     // 2. assume few users use non-refcounted AVPackets, so usually no copy is
     //    needed
 
+    // 若已经有一个合法的编码帧了，那就必须先拿走这个帧，然后才能接收AVFrame，即：AVERROR(EAGAIN)
     if (avctx->internal->buffer_pkt_valid)
         return AVERROR(EAGAIN);
 
@@ -3038,7 +3041,7 @@ int attribute_align_arg avcodec_receive_packet(AVCodecContext *avctx, AVPacket *
     if (!avcodec_is_open(avctx) || !av_codec_is_encoder(avctx->codec))
         return AVERROR(EINVAL);
 
-    if (avctx->codec->receive_packet) {
+    if (avctx->codec->receive_packet) { // 如果编码器提供了receive_packet接口的实现，则优先走receive_packet接口
         if (avctx->internal->draining && !(avctx->codec->capabilities & AV_CODEC_CAP_DELAY))
             return AVERROR_EOF;
         return avctx->codec->receive_packet(avctx, avpkt);
@@ -3046,19 +3049,21 @@ int attribute_align_arg avcodec_receive_packet(AVCodecContext *avctx, AVPacket *
 
     // Emulation via old API.
 
-    if (!avctx->internal->buffer_pkt_valid) {
+    if (!avctx->internal->buffer_pkt_valid) { // 若没有已编码好的数据，则尝试去编码
         int got_packet;
         int ret;
+        // 若没有进入flush状态，则直接返回AVERROR(EAGAIN)，因为avcodec_send_frame时，已经尝试编码过了
         if (!avctx->internal->draining)
             return AVERROR(EAGAIN);
-        ret = do_encode(avctx, NULL, &got_packet);
+        ret = do_encode(avctx, NULL, &got_packet); // 已经进入了flush状态，去拿残留帧
         if (ret < 0)
             return ret;
+        // 如果残留帧也没有了，那就是编码结束了
         if (ret >= 0 && !got_packet)
             return AVERROR_EOF;
     }
 
-    av_packet_move_ref(avpkt, avctx->internal->buffer_pkt);
+    av_packet_move_ref(avpkt, avctx->internal->buffer_pkt); // 直接拿走编码后的帧，并重置avctx->internal->buffer_pkt_valid标志位为0
     avctx->internal->buffer_pkt_valid = 0;
     return 0;
 }

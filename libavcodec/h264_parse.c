@@ -446,7 +446,7 @@ int ff_h264_decode_extradata(const uint8_t *data, int size, H264ParamSets *ps,
     if (!data || size <= 0)
         return -1;
 
-    if (data[0] == 1) {
+    if (data[0] == 1) { // AVCDecoderConfigurationRecord的第一个字节固定为1
         int i, cnt, nalsize;
         const uint8_t *p = data;
 

@@ -112,7 +112,7 @@ static int adts_write_frame_header(ADTSContext *ctx,
                                    uint8_t *buf, int size, int pce_size)
 {
     PutBitContext pb;
-
+    // adts中的size是包含了7字节的adts本身长度+音频帧长度
     unsigned full_frame_size = (unsigned)ADTS_HEADER_SIZE + size + pce_size;
     if (full_frame_size > ADTS_MAX_FRAME_BYTES) {
         av_log(NULL, AV_LOG_ERROR, "ADTS frame size too large: %u (max %d)\n",
@@ -122,7 +122,7 @@ static int adts_write_frame_header(ADTSContext *ctx,
 
     init_put_bits(&pb, buf, ADTS_HEADER_SIZE);
 
-    /* adts_fixed_header */
+    /* adts_fixed_header 固定头部部分 */
     put_bits(&pb, 12, 0xfff);   /* syncword */
     put_bits(&pb, 1, 0);        /* ID */
     put_bits(&pb, 2, 0);        /* layer */
@@ -134,7 +134,7 @@ static int adts_write_frame_header(ADTSContext *ctx,
     put_bits(&pb, 1, 0);        /* original_copy */
     put_bits(&pb, 1, 0);        /* home */
 
-    /* adts_variable_header */
+    /* adts_variable_header 变长头部部分 */
     put_bits(&pb, 1, 0);        /* copyright_identification_bit */
     put_bits(&pb, 1, 0);        /* copyright_identification_start */
     put_bits(&pb, 13, full_frame_size); /* aac_frame_length */

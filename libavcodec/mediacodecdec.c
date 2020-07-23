@@ -433,7 +433,7 @@ static int mediacodec_decode_frame(AVCodecContext *avctx, void *data,
     AVFrame *frame    = data;
     int ret;
 
-    /* buffer the input packet */
+    /* buffer the input packet 把avpkt缓存到s->fifo */
     if (avpkt->size) {
         AVPacket input_pkt = { 0 };
 
