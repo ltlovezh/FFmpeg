@@ -2192,7 +2192,7 @@ static int open_output_file(OptionsContext *o, const char *filename)
                     if (input_descriptor)
                         input_props = input_descriptor->props & (AV_CODEC_PROP_TEXT_SUB | AV_CODEC_PROP_BITMAP_SUB);
                     if (output_descriptor)
-                        output_props = output_descriptor->props & (AV_CODEC_PROP_TEXT_SUB | AV_CODEC_PROP_BITMAP_SUB);
+                        output_props = oucmdutils.ctput_descriptor->props & (AV_CODEC_PROP_TEXT_SUB | AV_CODEC_PROP_BITMAP_SUB);
                     if (subtitle_codec_name ||
                         input_props & output_props ||
                         // Map dvb teletext which has neither property to any output subtitle encoder
@@ -3215,7 +3215,7 @@ static int open_files(OptionGroupList *l, const char *inout,
 
 int ffmpeg_parse_options(int argc, char **argv)
 {
-    OptionParseContext octx;
+    OptionParseContext octx; // 参数解析的结果
     uint8_t error[128];
     int ret;
 

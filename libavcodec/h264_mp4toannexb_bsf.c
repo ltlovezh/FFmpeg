@@ -28,9 +28,9 @@
 #include "bsf.h"
 
 typedef struct H264BSFContext {
-    int32_t  sps_offset;
-    int32_t  pps_offset;
-    uint8_t  length_size;
+    int32_t  sps_offset; // par_out->extradata中sps的地址偏移
+    int32_t  pps_offset; // par_out->extradata中pps的地址偏移
+    uint8_t  length_size; // avcc h264的 nalu length size
     uint8_t  new_idr;
     uint8_t  idr_sps_seen;
     uint8_t  idr_pps_seen;
@@ -48,10 +48,10 @@ static int alloc_and_copy(AVPacket *out,
     err = av_grow_packet(out, sps_pps_size + in_size + nal_header_size);
     if (err < 0)
         return err;
-
+    // 输入参数in就是nalu，去除了前面4字节的nalu length size
     if (sps_pps)
-        memcpy(out->data + offset, sps_pps, sps_pps_size);
-    memcpy(out->data + sps_pps_size + nal_header_size + offset, in, in_size);
+        memcpy(out->data + offset, sps_pps, sps_pps_size); // 先copy sps和pps
+    memcpy(out->data + sps_pps_size + nal_header_size + offset, in, in_size); // 再copy裸流数据（I帧）
     if (!offset) {
         AV_WB32(out->data + sps_pps_size, 1);
     } else {
@@ -72,7 +72,7 @@ static int h264_extradata_to_annexb(AVBSFContext *ctx, const int padding)
              sps_seen                   = 0, pps_seen = 0;
     const uint8_t *extradata            = ctx->par_in->extradata + 4;
     static const uint8_t nalu_header[4] = { 0, 0, 0, 1 };
-    int length_size = (*extradata++ & 0x3) + 1; // retrieve length coded size
+    int length_size = (*extradata++ & 0x3) + 1; // retrieve length coded size AVCDecoderConfigurationRecord第5个字节的低2 bit + 1表示length_size
 
     s->sps_offset = s->pps_offset = -1;
 
@@ -88,8 +88,8 @@ static int h264_extradata_to_annexb(AVBSFContext *ctx, const int padding)
     while (unit_nb--) {
         int err;
 
-        unit_size   = AV_RB16(extradata);
-        total_size += unit_size + 4;
+        unit_size   = AV_RB16(extradata); // sps的长度
+        total_size += unit_size + 4; // 加上分隔符的总长度
         if (total_size > INT_MAX - padding) {
             av_log(ctx, AV_LOG_ERROR,
                    "Too big extradata size, corrupted stream or invalid MP4/AVCC bitstream\n");
@@ -104,9 +104,9 @@ static int h264_extradata_to_annexb(AVBSFContext *ctx, const int padding)
         }
         if ((err = av_reallocp(&out, total_size + padding)) < 0)
             return err;
-        memcpy(out + total_size - unit_size - 4, nalu_header, 4);
-        memcpy(out + total_size - unit_size, extradata + 2, unit_size);
-        extradata += 2 + unit_size;
+        memcpy(out + total_size - unit_size - 4, nalu_header, 4); // 先copy分隔符
+        memcpy(out + total_size - unit_size, extradata + 2, unit_size); // 再copy sps数据
+        extradata += 2 + unit_size; // 两个字节表示一个sps的长度
 pps:
         if (!unit_nb && !sps_done++) {
             unit_nb = *extradata++; /* number of pps unit(s) */
@@ -131,7 +131,7 @@ pps:
                "The resulting stream may not play.\n");
 
     av_freep(&ctx->par_out->extradata);
-    ctx->par_out->extradata      = out;
+    ctx->par_out->extradata      = out; // 提取出的 00 00 00 01 sps 00 00 00 01 pps作为输出的extradata
     ctx->par_out->extradata_size = total_size;
 
     return length_size;
@@ -203,7 +203,7 @@ static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *out)
         for (nal_size = 0, i = 0; i<s->length_size; i++)
             nal_size = (nal_size << 8) | buf[i];
 
-        buf += s->length_size;
+        buf += s->length_size; // 跳过nalu length size
         unit_type = *buf & 0x1f;
 
         if (nal_size > buf_end - buf || nal_size < 0)
@@ -236,7 +236,7 @@ static int h264_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *out)
             s->new_idr = 1;
 
         /* prepend only to the first type 5 NAL unit of an IDR picture, if no sps/pps are already present */
-        if (s->new_idr && unit_type == 5 && !s->idr_sps_seen && !s->idr_pps_seen) {
+        if (s->new_idr && unit_type == 5 && !s->idr_sps_seen && !s->idr_pps_seen) { // 每个I帧前面添加sps和pps
             if ((ret=alloc_and_copy(out,
                                ctx->par_out->extradata, ctx->par_out->extradata_size,
                                buf, nal_size)) < 0)

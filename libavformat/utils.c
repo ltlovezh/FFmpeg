@@ -534,7 +534,7 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
         goto fail;
 
     av_strlcpy(s->filename, filename ? filename : "", sizeof(s->filename));
-    if ((ret = init_input(s, filename, &tmp)) < 0)
+    if ((ret = init_input(s, filename, &tmp)) < 0) // 确定iformat
         goto fail;
     s->probe_score = ret;
 
@@ -1512,7 +1512,7 @@ static int read_frame_internal(AVFormatContext *s, AVPacket *pkt)
 
     while (!got_packet && !s->internal->parse_queue) {
         AVStream *st;
-        AVPacket cur_pkt;
+        AVPacket cur_pkt; // demux出的原始AVPacket
 
         /* read next packet */
         ret = ff_read_packet(s, &cur_pkt);
@@ -4243,7 +4243,7 @@ AVStream *avformat_new_stream(AVFormatContext *s, const AVCodec *c)
     streams = av_realloc_array(s->streams, s->nb_streams + 1, sizeof(*streams));
     if (!streams)
         return NULL;
-    s->streams = streams;
+    s->streams = streams; // 添加流
 
     st = av_mallocz(sizeof(AVStream));
     if (!st)

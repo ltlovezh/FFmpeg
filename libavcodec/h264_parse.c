@@ -450,7 +450,7 @@ int ff_h264_decode_extradata(const uint8_t *data, int size, H264ParamSets *ps,
         int i, cnt, nalsize;
         const uint8_t *p = data;
 
-        *is_avc = 1;
+        *is_avc = 1; // 是AVCDecoderConfigurationRecord格式的元数据，所以是AVCC h264
 
         if (size < 7) {
             av_log(logctx, AV_LOG_ERROR, "avcC %d too short\n", size);
@@ -489,8 +489,8 @@ int ff_h264_decode_extradata(const uint8_t *data, int size, H264ParamSets *ps,
         // Store right nal length size that will be used to parse all other nals
         *nal_length_size = (data[4] & 0x03) + 1;
     } else {
-        *is_avc = 0;
-        ret = decode_extradata_ps(data, size, ps, 0, logctx);
+        *is_avc = 0; //
+        ret = decode_extradata_ps(data, size, ps, 0, logctx); // 00 00 00 01 sps 00 00 00 001 pps的各种中解析出sps和pps
         if (ret < 0)
             return ret;
     }

@@ -31,9 +31,9 @@
 
 typedef struct HVCCNALUnitArray {
     uint8_t  array_completeness;
-    uint8_t  NAL_unit_type;
-    uint16_t numNalus;
-    uint16_t *nalUnitLength;
+    uint8_t  NAL_unit_type; // 类型
+    uint16_t numNalus; // nalu个数
+    uint16_t *nalUnitLength;// 相同类型的多个nalu
     uint8_t  **nalUnit;
 } HVCCNALUnitArray;
 
@@ -54,9 +54,9 @@ typedef struct HEVCDecoderConfigurationRecord {
     uint8_t  constantFrameRate;
     uint8_t  numTemporalLayers;
     uint8_t  temporalIdNested;
-    uint8_t  lengthSizeMinusOne;
-    uint8_t  numOfArrays;
-    HVCCNALUnitArray *array;
+    uint8_t  lengthSizeMinusOne; // nalu length size
+    uint8_t  numOfArrays; // 长度
+    HVCCNALUnitArray *array; // vps/sps/pps等信息
 } HEVCDecoderConfigurationRecord;
 
 typedef struct HVCCProfileTierLevel {
@@ -642,7 +642,7 @@ static int hvcc_parse_pps(GetBitContext *gb,
     /* nothing useful for hvcC past this point */
     return 0;
 }
-
+// 删除竞争码
 static uint8_t *nal_unit_extract_rbsp(const uint8_t *src, uint32_t src_len,
                                       uint32_t *dst_len)
 {
@@ -753,7 +753,7 @@ static int hvcc_add_nal_unit(uint8_t *nal_buf, uint32_t nal_size,
     uint8_t *rbsp_buf;
     uint32_t rbsp_size;
 
-    rbsp_buf = nal_unit_extract_rbsp(nal_buf, nal_size, &rbsp_size);
+    rbsp_buf = nal_unit_extract_rbsp(nal_buf, nal_size, &rbsp_size); // 剔除0x03竞争码
     if (!rbsp_buf) {
         ret = AVERROR(ENOMEM);
         goto end;
@@ -1106,17 +1106,17 @@ int ff_isom_write_hvcc(AVIOContext *pb, const uint8_t *data,
         /* We can't write a valid hvcC from the provided data */
         ret = AVERROR_INVALIDDATA;
         goto end;
-    } else if (*data == 1) {
+    } else if (*data == 1) { // HEVCDecoderConfigurationRecord，直接写入
         /* Data is already hvcC-formatted */
         avio_write(pb, data, size);
         goto end;
-    } else if (!(AV_RB24(data) == 1 || AV_RB32(data) == 1)) {
+    } else if (!(AV_RB24(data) == 1 || AV_RB32(data) == 1)) { // Annex B start code
         /* Not a valid Annex B start code prefix */
         ret = AVERROR_INVALIDDATA;
         goto end;
     }
 
-    ret = ff_avc_parse_nal_units_buf(data, &start, &size);
+    ret = ff_avc_parse_nal_units_buf(data, &start, &size); // 4字节长度 + NALU
     if (ret < 0)
         goto end;
 
@@ -1125,9 +1125,9 @@ int ff_isom_write_hvcc(AVIOContext *pb, const uint8_t *data,
 
     while (end - buf > 4) {
         uint32_t len = FFMIN(AV_RB32(buf), end - buf - 4);
-        uint8_t type = (buf[4] >> 1) & 0x3f;
+        uint8_t type = (buf[4] >> 1) & 0x3f; // nalu类型
 
-        buf += 4;
+        buf += 4; // 跳过4字节的nalu长度
 
         switch (type) {
         case HEVC_NAL_VPS:

@@ -411,7 +411,7 @@ av_cold int ff_h264_decode_init(AVCodecContext *avctx)
     }
     avctx->ticks_per_frame = 2;
 
-    if (avctx->extradata_size > 0 && avctx->extradata) {
+    if (avctx->extradata_size > 0 && avctx->extradata) { // 处理视频元数据，可以兼容两种格式，解析出SPS和PPS
         ret = ff_h264_decode_extradata(avctx->extradata, avctx->extradata_size,
                                        &h->ps, &h->is_avc, &h->nal_length_size,
                                        avctx->err_recognition, avctx);

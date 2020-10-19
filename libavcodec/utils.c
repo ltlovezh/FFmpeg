@@ -2909,7 +2909,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
     // Emulation via old API. Assume avpkt is likely not refcounted, while
     // decoder output is always refcounted, and avoid copying.
-    // 之前输入的的AVPacket还有，不再接收新的输入，需要先拿出输出。
+    // 之前输入的的AVPacket还有，或者 解码帧还没拿走，则不再接收新的输入，需要先拿出输出。
     if (avctx->internal->buffer_pkt->size || avctx->internal->buffer_frame->buf[0])
         return AVERROR(EAGAIN);
 

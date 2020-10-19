@@ -466,7 +466,7 @@ int ff_mp4_read_descr(AVFormatContext *fc, AVIOContext *pb, int *tag)
 
 void ff_mp4_parse_es_descr(AVIOContext *pb, int *es_id)
 {
-     int flags;
+     int flags; // 3个字节
      if (es_id) *es_id = avio_rb16(pb);
      else                avio_rb16(pb);
      flags = avio_r8(pb);
@@ -511,7 +511,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
     st->codecpar->bit_rate = avio_rb32(pb); /* avg bitrate */
 
-    codec_id= ff_codec_get_id(ff_mp4_obj_type, object_type_id);
+    codec_id= ff_codec_get_id(ff_mp4_obj_type, object_type_id); // 根据MP4DecConfigDescr的第一个字节确定CodecID
     if (codec_id)
         st->codecpar->codec_id = codec_id;
     av_log(fc, AV_LOG_TRACE, "esds object type id 0x%02x\n", object_type_id);
@@ -521,6 +521,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
         if (!len || (uint64_t)len > (1<<30))
             return -1;
         av_free(st->codecpar->extradata);
+        // MP4DecSpecificDescr的内容就是AudioSpecificConfig，即extradata中的数据
         if ((ret = ff_get_extradata(fc, st->codecpar, pb, len)) < 0)
             return ret;
         if (st->codecpar->codec_id == AV_CODEC_ID_AAC) {

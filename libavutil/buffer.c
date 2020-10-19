@@ -41,7 +41,7 @@ AVBufferRef *av_buffer_create(uint8_t *data, int size,
     buf->free     = free ? free : av_buffer_default_free;
     buf->opaque   = opaque;
 
-    atomic_init(&buf->refcount, 1);
+    atomic_init(&buf->refcount, 1); // 初始化引用计数为1
 
     if (flags & AV_BUFFER_FLAG_READONLY)
         buf->flags |= BUFFER_FLAG_READONLY;

@@ -412,7 +412,7 @@ static int hevc_parse(AVCodecParserContext *s,
     HEVCParserContext *ctx = s->priv_data;
     ParseContext *pc = &ctx->pc;
 
-    if (avctx->extradata && !ctx->parsed_extradata) {
+    if (avctx->extradata && !ctx->parsed_extradata) { // 解析元数据
         parse_nal_units(s, avctx->extradata, avctx->extradata_size, avctx);
         ctx->parsed_extradata = 1;
     }

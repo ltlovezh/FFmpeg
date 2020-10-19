@@ -908,7 +908,7 @@ static int mpegts_init(AVFormatContext *s)
             pcr_st           = st;
         }
         if (st->codecpar->codec_id == AV_CODEC_ID_AAC &&
-            st->codecpar->extradata_size > 0) {
+            st->codecpar->extradata_size > 0) { // AAC，且有元数据AudioSpecificConfig,通过adts AVOutputFormat实现ES AAC -> ADTS的转换
             AVStream *ast;
             ts_st->amux = avformat_alloc_context();
             if (!ts_st->amux) {

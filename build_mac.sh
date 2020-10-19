@@ -8,17 +8,17 @@ echo "PREFIX : ${PREFIX}"
     --enable-gpl \
     --enable-nonfree \
     --enable-libass \
-    --enable-libfdk-aac \
+    # --enable-libfdk-aac \
     --enable-libfreetype \
     --enable-libmp3lame \
     --enable-libtheora \
     --enable-libvorbis \
     --enable-libvpx \
     --enable-libx264 \
-    --enable-libx265 \
+    # --enable-libx265 \
     --enable-libopus \
     --enable-libxvid \
-    --samples=fate-suite \
+    --enable-shared \
     --extra-ldflags="-L/usr/local/lib \
     -L/usr/local/Cellar/libogg/1.3.3/lib \
     -L/usr/local/Cellar/theora/1.1.1/lib \
@@ -26,8 +26,9 @@ echo "PREFIX : ${PREFIX}"
     --extra-cflags="-I/usr/local/include \
     -I/usr/local/Cellar/libogg/1.3.3/include \
     -I/usr/local/Cellar/theora/1.1.1/include \
-    -I/usr/local/Cellar/libvorbis/1.3.5/include"
+    -I/usr/local/Cellar/libvorbis/1.3.6/include "
 
 make clean
-make -j8
-make install
+make
+#make -j8
+#make install

@@ -611,7 +611,7 @@ static int mov_write_esds_tag(AVIOContext *pb, MOVTrack *track) // Basic
     avio_wb32(pb, props ? FFMAX3(props->max_bitrate, props->avg_bitrate, avg_bitrate) : FFMAX(track->par->bit_rate, avg_bitrate)); // maxbitrate (FIXME should be max rate in any 1 sec window)
     avio_wb32(pb, avg_bitrate);
 
-    if (track->vos_len) {
+    if (track->vos_len) { // 写入extradata
         // DecoderSpecific info descriptor
         put_descr(pb, 0x05, track->vos_len);
         avio_write(pb, track->vos_data, track->vos_len);
@@ -727,6 +727,7 @@ static int mov_write_wave_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
         /* useless atom needed by mplayer, ipod, not needed by quicktime */
         avio_wb32(pb, 12); /* size */
         ffio_wfourcc(pb, "mp4a");
+        av_log(s, AV_LOG_ERROR, "ltlovezh, mov_write_wave_tag mp4a, channels: %d, sample_rate: %d\n", track->par->channels, track->par->sample_rate);
         avio_wb32(pb, 0);
         mov_write_esds_tag(pb, track);
     } else if (mov_pcm_le_gt16(track->par->codec_id))  {
@@ -964,7 +965,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
     avio_wb16(pb, version); /* Version */
     avio_wb16(pb, 0); /* Revision level */
     avio_wb32(pb, 0); /* Reserved */
-
+    av_log(NULL, AV_LOG_ERROR, "mov_write_audio_tag vesrion: %d, channels: %d, sample_rate: %d\n",version, track->par->channels, track->par->sample_rate);
     if (version == 2) {
         avio_wb16(pb, 3);
         avio_wb16(pb, 16);
@@ -3797,7 +3798,7 @@ static int mov_write_isml_manifest(AVIOContext *pb, MOVMuxContext *mov, AVFormat
                 uint8_t *ptr;
                 int size = track->par->extradata_size;
                 if (!ff_avc_write_annexb_extradata(track->par->extradata, &ptr,
-                                                   &size)) {
+                                                   &size)) { // 从track->par->extradata提取出 00 00 00 01 sps 00 00 00 01 pps
                     param_write_hex(pb, "CodecPrivateData",
                                     ptr ? ptr : track->par->extradata,
                                     size);
@@ -4475,6 +4476,7 @@ static int mov_write_uuidprof_tag(AVIOContext *pb, AVFormatContext *s)
     avio_wb32(pb, 0x0);
     avio_wb32(pb, 0x2);   /* TrackID */
     ffio_wfourcc(pb, "mp4a");
+    av_log(s, AV_LOG_ERROR, "ltlovezh, mov_write_uuidprof_tag mp4a, channels: %d, sample_rate: %d\n", audio_par->channels, audio_par->sample_rate);
     avio_wb32(pb, 0x20f);
     avio_wb32(pb, 0x0);
     avio_wb32(pb, audio_kbitrate);
@@ -4984,6 +4986,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
         av_log(s, AV_LOG_WARNING, "aac bitstream error\n");
     }
     if (par->codec_id == AV_CODEC_ID_H264 && trk->vos_len > 0 && *(uint8_t *)trk->vos_data != 1 && !TAG_IS_AVCI(trk->tag)) {
+        // H264、有extradata、且extradata不是AVCDecoderConfigurationRecord（AVCDecoderConfigurationRecord的首字节是1）的情况下，尝试把startcode替换成nalu size
         /* from x264 or from bytestream H.264 */
         /* NAL reformatting needed */
         if (trk->hint_track >= 0 && trk->hint_track < mov->nb_streams) {
@@ -4998,12 +5001,12 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
                     goto err;
                 }
             } else {
-                size = ff_avc_parse_nal_units(pb, pkt->data, pkt->size);
+                size = ff_avc_parse_nal_units(pb, pkt->data, pkt->size); // 把startcode替换为nalu size，按照AVCC格式写入
             }
         }
     } else if (par->codec_id == AV_CODEC_ID_HEVC && trk->vos_len > 6 &&
-               (AV_RB24(trk->vos_data) == 1 || AV_RB32(trk->vos_data) == 1)) {
-        /* extradata is Annex B, assume the bitstream is too and convert it */
+               (AV_RB24(trk->vos_data) == 1 || AV_RB32(trk->vos_data) == 1)) { // startcode分割的vps、sps和pps
+        /* extradata is Annex B, assume the bitstream is too and convert it extradata是Annex B, 那么假设nalu流也是Annex B,，转换它 */
         if (trk->hint_track >= 0 && trk->hint_track < mov->nb_streams) {
             ff_hevc_annexb2mp4_buf(pkt->data, &reformatted_data, &size, 0, NULL);
             avio_write(pb, reformatted_data, size);
@@ -5031,7 +5034,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
             if (ret) {
                 goto err;
             }
-        } else {
+        } else { // 否则直接写入。
             avio_write(pb, pkt->data, size);
         }
     }

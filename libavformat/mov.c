@@ -1140,7 +1140,7 @@ static int mov_read_ftyp(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return 0;
 }
 
-/* this atom should contain all header atoms */
+/* this atom should contain all header atoms 解析moov box */
 static int mov_read_moov(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
     int ret;
@@ -5460,7 +5460,7 @@ static int mov_read_default(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         if (a.size < 0)
             break;
         a.size = FFMIN(a.size, atom.size - total_size);
-
+        // 找到对应type的解析器
         for (i = 0; mov_default_parse_table[i].type; i++)
             if (mov_default_parse_table[i].type == a.type) {
                 parse = mov_default_parse_table[i].parse;
@@ -6003,7 +6003,7 @@ static int mov_read_header(AVFormatContext *s)
     int j, err;
     MOVAtom atom = { AV_RL32("root") };
     int i;
-
+    // 解密key
     if (mov->decryption_key_len != 0 && mov->decryption_key_len != AES_CTR_KEY_SIZE) {
         av_log(s, AV_LOG_ERROR, "Invalid decryption key len %d expected %d\n",
             mov->decryption_key_len, AES_CTR_KEY_SIZE);
@@ -6019,7 +6019,7 @@ static int mov_read_header(AVFormatContext *s)
         atom.size = INT64_MAX;
 
     /* check MOV header */
-    do {
+    do { // 找到moov box
     if (mov->moov_retry)
         avio_seek(pb, 0, SEEK_SET);
     if ((err = mov_read_default(mov, pb, atom)) < 0) {

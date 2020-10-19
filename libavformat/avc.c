@@ -81,7 +81,7 @@ int ff_avc_parse_nal_units(AVIOContext *pb, const uint8_t *buf_in, int size)
             break;
 
         nal_end = ff_avc_find_startcode(nal_start, end);
-        avio_wb32(pb, nal_end - nal_start);
+        avio_wb32(pb, nal_end - nal_start); // 写入nalu size
         avio_write(pb, nal_start, nal_end - nal_start);
         size += 4 + nal_end - nal_start;
         nal_start = nal_end;
@@ -108,7 +108,7 @@ int ff_isom_write_avcc(AVIOContext *pb, const uint8_t *data, int len)
     if (len > 6) {
         /* check for H.264 start code */
         if (AV_RB32(data) == 0x00000001 ||
-            AV_RB24(data) == 0x000001) {
+            AV_RB24(data) == 0x000001) { // extradata是分隔符，需要重新组织成AVCDecoderConfigurationRecord格式
             uint8_t *buf=NULL, *end, *start;
             uint32_t sps_size=0, pps_size=0;
             uint8_t *sps=0, *pps=0;
@@ -140,7 +140,7 @@ int ff_isom_write_avcc(AVIOContext *pb, const uint8_t *data, int len)
 
             if (!sps || !pps || sps_size < 4 || sps_size > UINT16_MAX || pps_size > UINT16_MAX)
                 return AVERROR_INVALIDDATA;
-
+            // 写入AVCDecoderConfigurationRecord格式
             avio_w8(pb, 1); /* version */
             avio_w8(pb, sps[1]); /* profile */
             avio_w8(pb, sps[2]); /* profile compat */
@@ -154,7 +154,7 @@ int ff_isom_write_avcc(AVIOContext *pb, const uint8_t *data, int len)
             avio_wb16(pb, pps_size);
             avio_write(pb, pps, pps_size);
             av_free(start);
-        } else {
+        } else { // 否则直接AVCDecoderConfigurationRecord格式，可以直接写入到avcC Box
             avio_write(pb, data, len);
         }
     }

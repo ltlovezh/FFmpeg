@@ -159,13 +159,13 @@ static int adts_write_packet(AVFormatContext *s, AVPacket *pkt)
                                              adts->pce_size);
         if (err < 0)
             return err;
-        avio_write(pb, buf, ADTS_HEADER_SIZE);
+        avio_write(pb, buf, ADTS_HEADER_SIZE); // 先写入adts header
         if (adts->pce_size) {
             avio_write(pb, adts->pce_data, adts->pce_size);
             adts->pce_size = 0;
         }
     }
-    avio_write(pb, pkt->data, pkt->size);
+    avio_write(pb, pkt->data, pkt->size); // 再写入ES AAC
 
     return 0;
 }
