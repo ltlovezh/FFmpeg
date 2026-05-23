@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HLS + TS Playback Flow</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #071312;
+    }
+
+    [data-composition-id="hls-ts-playback"] {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #071312;
+    }
+
+    #stage {
+      width: min(100vw, 177.777vh);
+      height: min(56.25vw, 100vh);
+      display: block;
+      background: #071312;
+    }
+  </style>
+</head>
+<body>
+  <div
+    data-composition-id="hls-ts-playback"
+    data-width="1920"
+    data-height="1080"
+    data-start="0"
+    data-duration="124"
+    data-track-index="0">
+    <canvas id="stage" width="1920" height="1080" aria-label="HLS + TS playback teaching video"></canvas>
+  </div>
+
+  <script>
+    (() => {
+      const W = 1920;
+      const H = 1080;
+      const DURATION = 124;
+      const canvas = document.getElementById("stage");
+      const ctx = canvas.getContext("2d", { alpha: false });
+
+      const colors = {
+        bg: "#071312",
+        panel: "#10201d",
+        panel2: "#152b27",
+        green: "#7bd88f",
+        cyan: "#62d6e8",
+        amber: "#f2c94c",
+        red: "#ff6b6b",
+        text: "#f4fbf7",
+        muted: "#a9c6bd",
+        dim: "#46635b",
+        line: "#29453e"
+      };
+
+      const scenes = [
+        {
+          start: 0,
+          end: 10,
+          kicker: "总览",
+          title: "HLS 负责选片段，TS 负责拆音视频",
+          subtitle: "播放链路不是一个文件，而是 playlist、segment、demux、decode、sync、render 的流水线。",
+          type: "overview",
+          bullets: ["m3u8 决定下载哪个 TS", "PAT/PMT 决定 PID 属于谁", "PTS/DTS 决定何时播放"]
+        },
+        {
+          start: 10,
+          end: 25,
+          kicker: "Step 1",
+          title: "解析 Master Playlist",
+          subtitle: "从多个 variant 中选择合适的码率、分辨率、codec 和音轨组。",
+          type: "master",
+          bullets: ["#EXT-X-STREAM-INF -> variant", "BANDWIDTH / CODECS / RESOLUTION", "#EXT-X-MEDIA -> audio / subtitle rendition"]
+        },
+        {
+          start: 25,
+          end: 43,
+          kicker: "Step 2",
+          title: "解析 Media Playlist 并定位 TS",
+          subtitle: "MEDIA-SEQUENCE + EXTINF 把时间映射到 segment 序号。",
+          type: "media",
+          bullets: ["start_seq_no = 1200", "cur_seq_no - start_seq_no -> 数组下标", "live 需要处理滑窗和 reload"]
+        },
+        {
+          start: 43,
+          end: 58,
+          kicker: "FFmpeg HLS Demux",
+          title: "HLS 层把多个 TS 变成连续输入",
+          subtitle: "hls.c 负责请求、重试、解密、预取；子 demuxer 才真正解析 TS。",
+          type: "hlsdemux",
+          bullets: ["read_data_continuous() 连续读 segment", "av_probe_input_buffer() 探测 mpegts", "hls_read_packet() 按最小 DTS 输出"]
+        },
+        {
+          start: 58,
+          end: 75,
+          kicker: "Step 3",
+          title: "TS 包：先用 PAT 找到 PMT",
+          subtitle: "每个 TS 包 188 bytes，PID 决定 payload 交给哪个 filter。",
+          type: "pat",
+          bullets: ["PID 0x0000 固定是 PAT", "PAT: program -> PMT PID", "continuity counter 发现丢包/乱序"]
+        },
+        {
+          start: 75,
+          end: 92,
+          kicker: "Step 4",
+          title: "PMT 建立音视频 PID 与 PES Filter",
+          subtitle: "PMT 中的 stream_type 决定 AAC、H.264 等 codec 类型。",
+          type: "pmt",
+          bullets: ["0x1b -> H.264 video PID", "0x0f -> AAC audio PID", "PES header 提供 PTS/DTS"]
+        },
+        {
+          start: 92,
+          end: 108,
+          kicker: "Step 5",
+          title: "ADTS AAC 与 Annex-B H.264 进入 Decoder",
+          subtitle: "TS demux 输出的是压缩 packet；decoder 输出 PCM 和视频帧。",
+          type: "decode",
+          bullets: ["ADTS sync 0xFFF 找 AAC frame", "Annex-B start code 找 H.264 NAL", "send_packet / receive_frame 解码"]
+        },
+        {
+          start: 108,
+          end: 124,
+          kicker: "Step 6",
+          title: "用时钟做同步，用指标做优化",
+          subtitle: "音频通常做 master clock；视频根据 PTS 决定等待、显示或丢帧。",
+          type: "sync",
+          bullets: ["audio clock 扣除设备 buffer", "video delay 跟随 master clock", "监控首帧、下载、队列、丢帧、A/V diff"]
+        }
+      ];
+
+      const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const smooth = (t) => {
+        t = clamp(t, 0, 1);
+        return t * t * (3 - 2 * t);
+      };
+
+      function activeScene(t) {
+        return scenes.find((s) => t >= s.start && t < s.end) || scenes[scenes.length - 1];
+      }
+
+      function localProgress(scene, t) {
+        return clamp((t - scene.start) / (scene.end - scene.start), 0, 1);
+      }
+
+      function setFont(size, weight = 500, mono = false) {
+        ctx.font = `${weight} ${size}px ${mono ? "SFMono-Regular, Menlo, Consolas, monospace" : "PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Arial, sans-serif"}`;
+      }
+
+      function roundRect(x, y, w, h, r) {
+        const rr = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.arcTo(x + w, y, x + w, y + h, rr);
+        ctx.arcTo(x + w, y + h, x, y + h, rr);
+        ctx.arcTo(x, y + h, x, y, rr);
+        ctx.arcTo(x, y, x + w, y, rr);
+        ctx.closePath();
+      }
+
+      function fillRound(x, y, w, h, r, color, stroke) {
+        roundRect(x, y, w, h, r);
+        ctx.fillStyle = color;
+        ctx.fill();
+        if (stroke) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      function line(x1, y1, x2, y2, color = colors.line, width = 3) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+
+      function arrow(x1, y1, x2, y2, color = colors.cyan, width = 4) {
+        line(x1, y1, x2, y2, color, width);
+        const a = Math.atan2(y2 - y1, x2 - x1);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - 18 * Math.cos(a - Math.PI / 6), y2 - 18 * Math.sin(a - Math.PI / 6));
+        ctx.lineTo(x2 - 18 * Math.cos(a + Math.PI / 6), y2 - 18 * Math.sin(a + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function drawBackground(t) {
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.save();
+        ctx.globalAlpha = 0.34;
+        ctx.strokeStyle = "#15312d";
+        ctx.lineWidth = 1;
+        for (let x = 80; x < W; x += 80) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+        }
+        for (let y = 80; y < H; y += 80) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(W, y);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.save();
+        ctx.globalAlpha = 0.24;
+        for (let i = 0; i < 22; i++) {
+          const x = ((i * 173 + t * 55) % (W + 240)) - 120;
+          const y = 96 + ((i * 71) % 830);
+          fillRound(x, y, 58, 22, 4, i % 3 === 0 ? colors.cyan : colors.green);
+        }
+        ctx.restore();
+
+        setFont(24, 700, true);
+        ctx.fillStyle = colors.green;
+        ctx.fillText("FFmpeg source-grounded walkthrough", 80, 64);
+        setFont(22, 500);
+        ctx.fillStyle = colors.muted;
+        ctx.fillText("HLS + MPEG-TS playback flow", 80, 96);
+
+        setFont(20, 500, true);
+        ctx.fillStyle = colors.dim;
+        ctx.textAlign = "right";
+        ctx.fillText("libavformat/hls.c  |  libavformat/mpegts.c  |  fftools/ffplay.c", W - 80, 64);
+        ctx.textAlign = "left";
+      }
+
+      function drawProgress(t) {
+        const x = 80;
+        const y = H - 72;
+        const w = W - 160;
+        const h = 8;
+        fillRound(x, y, w, h, 4, "#16332e");
+        fillRound(x, y, w * clamp(t / DURATION, 0, 1), h, 4, colors.green);
+        scenes.forEach((s) => {
+          const sx = x + w * (s.start / DURATION);
+          ctx.fillStyle = colors.cyan;
+          ctx.fillRect(sx, y - 5, 2, h + 10);
+        });
+        setFont(22, 600);
+        ctx.fillStyle = colors.muted;
+        ctx.fillText(formatTime(t), x, y + 42);
+        ctx.textAlign = "right";
+        ctx.fillText(formatTime(DURATION), x + w, y + 42);
+        ctx.textAlign = "left";
+      }
+
+      function formatTime(seconds) {
+        const s = Math.floor(seconds);
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      }
+
+      function drawTitle(scene, p) {
+        const y = lerp(158, 132, smooth(Math.min(p * 3, 1)));
+        ctx.globalAlpha = smooth(Math.min(p * 4, 1));
+        setFont(26, 700, true);
+        ctx.fillStyle = colors.cyan;
+        ctx.fillText(scene.kicker.toUpperCase(), 80, y);
+        setFont(62, 800);
+        ctx.fillStyle = colors.text;
+        ctx.fillText(scene.title, 80, y + 70);
+        setFont(30, 500);
+        ctx.fillStyle = colors.muted;
+        wrapText(scene.subtitle, 80, y + 122, 1180, 42);
+        ctx.globalAlpha = 1;
+      }
+
+      function wrapText(text, x, y, maxWidth, lineHeight) {
+        const chars = Array.from(text);
+        let lineText = "";
+        let lineY = y;
+        chars.forEach((ch, idx) => {
+          const test = lineText + ch;
+          if (ctx.measureText(test).width > maxWidth && lineText) {
+            ctx.fillText(lineText, x, lineY);
+            lineText = ch;
+            lineY += lineHeight;
+          } else {
+            lineText = test;
+          }
+          if (idx === chars.length - 1 && lineText) ctx.fillText(lineText, x, lineY);
+        });
+      }
+
+      function drawBullets(scene, p) {
+        const x = 80;
+        const y = 820;
+        scene.bullets.forEach((b, i) => {
+          const show = smooth(clamp((p - 0.12 - i * 0.12) / 0.16, 0, 1));
+          ctx.globalAlpha = show;
+          fillRound(x, y + i * 58 - 34, 16, 16, 3, i === 0 ? colors.green : i === 1 ? colors.cyan : colors.amber);
+          setFont(30, 600);
+          ctx.fillStyle = colors.text;
+          ctx.fillText(b, x + 36, y + i * 58 - 18);
+        });
+        ctx.globalAlpha = 1;
+      }
+
+      function nodeBox(label, sub, x, y, w, h, accent, active = true) {
+        ctx.save();
+        ctx.shadowColor = active ? accent : "transparent";
+        ctx.shadowBlur = active ? 18 : 0;
+        fillRound(x, y, w, h, 8, colors.panel, active ? accent : colors.line);
+        ctx.shadowBlur = 0;
+        fillRound(x, y, 8, h, 4, accent);
+        setFont(28, 800);
+        ctx.fillStyle = colors.text;
+        ctx.fillText(label, x + 26, y + 42);
+        if (sub) {
+          setFont(20, 500, true);
+          ctx.fillStyle = colors.muted;
+          ctx.fillText(sub, x + 26, y + 76);
+        }
+        ctx.restore();
+      }
+
+      function drawPacketAlong(points, p, color, label) {
+        const segs = [];
+        let total = 0;
+        for (let i = 0; i < points.length - 1; i++) {
+          const a = points[i], b = points[i + 1];
+          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          segs.push({ a, b, len });
+          total += len;
+        }
+        let d = total * (p % 1);
+        let x = points[0][0], y = points[0][1];
+        for (const s of segs) {
+          if (d <= s.len) {
+            const q = d / s.len;
+            x = lerp(s.a[0], s.b[0], q);
+            y = lerp(s.a[1], s.b[1], q);
+            break;
+          }
+          d -= s.len;
+        }
+        ctx.save();
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 22;
+        fillRound(x - 50, y - 20, 100, 40, 6, color);
+        ctx.shadowBlur = 0;
+        setFont(18, 800, true);
+        ctx.fillStyle = colors.bg;
+        ctx.textAlign = "center";
+        ctx.fillText(label, x, y + 7);
+        ctx.textAlign = "left";
+        ctx.restore();
+      }
+
+      function drawOverview(p) {
+        const y1 = 360;
+        const y2 = 580;
+        const boxes = [
+          ["URL", "master.m3u8", 80, y1, colors.green],
+          ["Master", "variants", 330, y1, colors.cyan],
+          ["Media", "segments", 610, y1, colors.cyan],
+          ["TS", "seg-1202.ts", 890, y1, colors.amber],
+          ["Demux", "PAT/PMT/PES", 1170, y1, colors.green],
+          ["Decode", "AAC/H.264", 1450, y1, colors.cyan],
+          ["Sync", "PTS/DTS", 610, y2, colors.amber],
+          ["Video", "texture", 890, y2, colors.green],
+          ["Audio", "PCM", 1170, y2, colors.cyan]
+        ];
+        boxes.forEach((b, i) => nodeBox(b[0], b[1], b[2], b[3], 210, 104, b[4], p > i * 0.055));
+        [[290, y1 + 52, 330, y1 + 52], [540, y1 + 52, 610, y1 + 52], [820, y1 + 52, 890, y1 + 52],
+         [1100, y1 + 52, 1170, y1 + 52], [1380, y1 + 52, 1450, y1 + 52],
+         [1555, y1 + 104, 715, y2], [820, y2 + 52, 890, y2 + 52], [1100, y2 + 52, 1170, y2 + 52]].forEach((a) => arrow(a[0], a[1], a[2], a[3], colors.line, 3));
+        drawPacketAlong([[185, 412], [435, 412], [715, 412], [995, 412], [1275, 412], [1555, 412], [715, 580], [995, 632], [1275, 632]], p * 1.7, colors.green, "pkt");
+      }
+
+      function drawMaster(p) {
+        fillRound(80, 312, 760, 440, 8, colors.panel, colors.line);
+        setFont(24, 800, true);
+        ctx.fillStyle = colors.green;
+        ctx.fillText("master.m3u8", 112, 354);
+        const lines = [
+          "#EXTM3U",
+          "#EXT-X-VERSION:3",
+          "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",URI=\"audio.m3u8\"",
+          "#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1280x720",
+          "v720/prog.m3u8",
+          "#EXT-X-STREAM-INF:BANDWIDTH=4200000,RESOLUTION=1920x1080",
+          "v1080/prog.m3u8"
+        ];
+        setFont(23, 600, true);
+        lines.forEach((lineText, i) => {
+          if (i === 3 || i === 5) fillRound(106, 386 + i * 46 - 28, 690, 38, 6, "rgba(98,214,232,0.15)", "rgba(98,214,232,0.35)");
+          ctx.fillStyle = i === 3 || i === 5 ? colors.cyan : colors.muted;
+          ctx.fillText(lineText, 112, 386 + i * 46);
+        });
+
+        const cardY = 342;
+        nodeBox("Variant A", "1.8 Mbps / 720p", 960, cardY, 360, 130, colors.cyan, p < 0.54);
+        nodeBox("Variant B", "4.2 Mbps / 1080p", 960, cardY + 170, 360, 130, colors.green, p >= 0.54);
+        nodeBox("Audio Group", "GROUP-ID aud", 1400, cardY + 86, 360, 130, colors.amber, true);
+        arrow(840, 498, 960, cardY + 65, colors.cyan, 4);
+        arrow(840, 590, 960, cardY + 235, colors.green, 4);
+        arrow(1320, cardY + 235, 1400, cardY + 151, colors.amber, 4);
+
+        const markerY = p < 0.54 ? cardY : cardY + 170;
+        fillRound(930, markerY + 40, 18, 50, 4, colors.green);
+        setFont(28, 800);
+        ctx.fillStyle = colors.text;
+        ctx.fillText(p < 0.54 ? "启动先选稳妥档" : "吞吐稳定后可升档", 960, 704);
+      }
+
+      function drawMedia(p) {
+        fillRound(80, 300, 740, 470, 8, colors.panel, colors.line);
+        setFont(24, 800, true);
+        ctx.fillStyle = colors.green;
+        ctx.fillText("v1080/prog.m3u8", 112, 344);
+        const rows = [
+          ["#EXT-X-TARGETDURATION:6", ""],
+          ["#EXT-X-MEDIA-SEQUENCE:1200", "start_seq_no"],
+          ["#EXTINF:6.000,", "duration"],
+          ["seg-1200.ts", "index 0"],
+          ["#EXTINF:6.000,", "duration"],
+          ["seg-1201.ts", "index 1"],
+          ["#EXTINF:5.960,", "duration"],
+          ["seg-1202.ts", "index 2"]
+        ];
+        setFont(25, 600, true);
+        rows.forEach((r, i) => {
+          const y = 390 + i * 44;
+          if (i === 1 || i === 7) fillRound(106, y - 30, 600, 38, 6, i === 7 ? "rgba(123,216,143,0.18)" : "rgba(242,201,76,0.14)", i === 7 ? colors.green : colors.amber);
+          ctx.fillStyle = i === 7 ? colors.green : i === 1 ? colors.amber : colors.muted;
+          ctx.fillText(r[0], 112, y);
+          if (r[1]) {
+            ctx.fillStyle = colors.dim;
+            ctx.fillText(r[1], 590, y);
+          }
+        });
+
+        nodeBox("目标时间", "约 17.2s", 980, 330, 300, 118, colors.amber, true);
+        nodeBox("累加 EXTINF", "6 + 6 + 5.96", 980, 505, 360, 118, colors.cyan, true);
+        nodeBox("定位结果", "seg-1202.ts", 980, 680, 330, 118, colors.green, true);
+        arrow(820, 682, 980, 739, colors.green, 5);
+        drawPacketAlong([[1130, 448], [1130, 505], [1160, 623], [1160, 680]], p * 1.4, colors.amber, "seq");
+        setFont(34, 800, true);
+        ctx.fillStyle = colors.text;
+        ctx.fillText("index = cur_seq_no - start_seq_no", 1375, 492);
+        ctx.fillStyle = colors.green;
+        ctx.fillText("1202 - 1200 = 2", 1375, 552);
+      }
+
+      function drawHLSDemux(p) {
+        nodeBox("HLS Demuxer", "libavformat/hls.c", 90, 330, 380, 140, colors.green, true);
+        nodeBox("Segment HTTP", "open_input()", 90, 560, 380, 140, colors.cyan, true);
+        nodeBox("Custom AVIO", "read_data_continuous()", 690, 445, 440, 140, colors.amber, true);
+        nodeBox("Sub Demuxer", "mpegts", 1350, 445, 360, 140, colors.green, true);
+        arrow(470, 400, 690, 500, colors.green, 5);
+        arrow(470, 630, 690, 530, colors.cyan, 5);
+        arrow(1130, 515, 1350, 515, colors.amber, 5);
+        drawPacketAlong([[280, 630], [690, 530], [910, 515], [1350, 515], [1530, 515]], p * 2.2, colors.green, "TS bytes");
+
+        fillRound(700, 672, 1000, 102, 8, colors.panel2, colors.line);
+        setFont(28, 700, true);
+        ctx.fillStyle = colors.cyan;
+        ctx.fillText("hls_read_packet(): 每个 playlist 缓存一个 packet，再选 DTS 最小者输出", 740, 735);
+      }
+
+      function drawPAT(p) {
+        fillRound(80, 330, 1760, 160, 8, colors.panel, colors.line);
+        setFont(24, 700, true);
+        ctx.fillStyle = colors.muted;
+        ctx.fillText("188-byte TS packet", 112, 372);
+        const fields = [
+          ["0x47", 112, 415, 90, colors.green],
+          ["TEI", 222, 415, 90, colors.red],
+          ["PUSI", 332, 415, 110, colors.amber],
+          ["PID", 462, 415, 180, colors.cyan],
+          ["AFC", 662, 415, 90, colors.muted],
+          ["CC", 772, 415, 90, colors.amber],
+          ["payload", 882, 415, 880, colors.green]
+        ];
+        fields.forEach((f) => {
+          fillRound(f[1], f[2] - 44, f[3], 70, 5, "rgba(255,255,255,0.04)", f[4]);
+          setFont(24, 800, true);
+          ctx.fillStyle = f[4];
+          ctx.textAlign = "center";
+          ctx.fillText(f[0], f[1] + f[3] / 2, f[2]);
+          ctx.textAlign = "left";
+        });
+
+        nodeBox("PID 0x0000", "PAT", 260, 610, 310, 118, colors.green, true);
+        nodeBox("program 1", "PMT PID 0x1000", 790, 610, 360, 118, colors.cyan, true);
+        nodeBox("打开 PMT filter", "pmt_cb()", 1370, 610, 350, 118, colors.amber, true);
+        arrow(570, 669, 790, 669, colors.green, 5);
+        arrow(1150, 669, 1370, 669, colors.cyan, 5);
+        drawPacketAlong([[507, 450], [415, 610], [970, 610], [1545, 610]], p * 1.6, colors.cyan, "PID");
+      }
+
+      function drawPMT(p) {
+        fillRound(80, 322, 800, 418, 8, colors.panel, colors.line);
+        setFont(28, 800, true);
+        ctx.fillStyle = colors.green;
+        ctx.fillText("PMT PID 0x1000", 112, 372);
+        const table = [
+          ["PCR PID", "0x0100", "clock reference"],
+          ["0x1b", "PID 0x0100", "H.264 video"],
+          ["0x0f", "PID 0x0101", "ADTS AAC audio"]
+        ];
+        table.forEach((row, i) => {
+          const y = 440 + i * 92;
+          fillRound(112, y - 50, 700, 70, 6, i === 0 ? "rgba(242,201,76,0.12)" : "rgba(98,214,232,0.10)", i === 0 ? colors.amber : colors.cyan);
+          setFont(28, 800, true);
+          ctx.fillStyle = i === 0 ? colors.amber : colors.cyan;
+          ctx.fillText(row[0], 140, y);
+          ctx.fillStyle = colors.text;
+          ctx.fillText(row[1], 330, y);
+          ctx.fillStyle = colors.muted;
+          ctx.fillText(row[2], 540, y);
+        });
+
+        nodeBox("Video PES", "PID 0x0100", 1040, 340, 330, 118, colors.green, true);
+        nodeBox("Audio PES", "PID 0x0101", 1040, 600, 330, 118, colors.cyan, true);
+        nodeBox("AVPacket", "payload + PTS/DTS", 1500, 470, 310, 128, colors.amber, true);
+        arrow(812, 532, 1040, 399, colors.green, 5);
+        arrow(812, 624, 1040, 659, colors.cyan, 5);
+        arrow(1370, 399, 1500, 522, colors.green, 5);
+        arrow(1370, 659, 1500, 552, colors.cyan, 5);
+        drawPacketAlong([[1185, 399], [1500, 522]], p * 2, colors.green, "PTS");
+        drawPacketAlong([[1185, 659], [1500, 552]], p * 2 + 0.45, colors.cyan, "DTS");
+      }
+
+      function drawDecode(p) {
+        fillRound(90, 330, 760, 420, 8, colors.panel, colors.line);
+        setFont(28, 800, true);
+        ctx.fillStyle = colors.cyan;
+        ctx.fillText("AAC / ADTS", 130, 382);
+        setFont(25, 700, true);
+        ["sync 0xFFF", "profile", "sample rate", "frame length", "AAC raw data"].forEach((v, i) => {
+          fillRound(130 + i * 132, 440, 118, 74, 5, i === 0 ? "rgba(123,216,143,0.16)" : "rgba(98,214,232,0.10)", i === 0 ? colors.green : colors.cyan);
+          ctx.fillStyle = i === 0 ? colors.green : colors.text;
+          ctx.textAlign = "center";
+          wrapCentered(v, 130 + i * 132 + 59, 470, 104, 25);
+          ctx.textAlign = "left";
+        });
+        nodeBox("AAC Decoder", "AVFrame(samples)", 290, 610, 360, 110, colors.green, true);
+
+        fillRound(1030, 330, 800, 420, 8, colors.panel, colors.line);
+        setFont(28, 800, true);
+        ctx.fillStyle = colors.green;
+        ctx.fillText("H.264 / Annex-B", 1070, 382);
+        const nals = [["00 00 01 67", "SPS"], ["00 00 01 68", "PPS"], ["00 00 01 65", "IDR"], ["00 00 01 41", "P-slice"]];
+        nals.forEach((n, i) => {
+          fillRound(1070, 430 + i * 64, 340, 46, 5, "rgba(123,216,143,0.10)", colors.green);
+          setFont(22, 700, true);
+          ctx.fillStyle = colors.green;
+          ctx.fillText(n[0], 1092, 460 + i * 64);
+          ctx.fillStyle = colors.text;
+          ctx.fillText(n[1], 1300, 460 + i * 64);
+        });
+        nodeBox("H.264 Decoder", "AVFrame(video)", 1420, 610, 360, 110, colors.cyan, true);
+        drawPacketAlong([[650, 665], [900, 665], [1420, 665]], p * 1.6, colors.amber, "decode");
+      }
+
+      function wrapCentered(text, x, y, maxWidth, lineHeight) {
+        const words = text.split(" ");
+        let lines = [];
+        let lineText = "";
+        words.forEach((word) => {
+          const test = lineText ? `${lineText} ${word}` : word;
+          if (ctx.measureText(test).width > maxWidth && lineText) {
+            lines.push(lineText);
+            lineText = word;
+          } else {
+            lineText = test;
+          }
+        });
+        if (lineText) lines.push(lineText);
+        lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+      }
+
+      function drawSync(p) {
+        fillRound(90, 326, 760, 420, 8, colors.panel, colors.line);
+        setFont(30, 800);
+        ctx.fillStyle = colors.text;
+        ctx.fillText("Audio Master Clock", 130, 382);
+        line(160, 560, 760, 560, colors.line, 5);
+        for (let i = 0; i < 7; i++) {
+          const x = 160 + i * 100;
+          fillRound(x - 28, 522, 56, 76, 4, i <= p * 7 ? colors.green : colors.panel2, colors.green);
+        }
+        const playhead = 160 + 600 * smooth(p);
+        line(playhead, 500, playhead, 632, colors.amber, 5);
+        setFont(24, 700, true);
+        ctx.fillStyle = colors.amber;
+        ctx.fillText("扣除 audio device buffer latency", 160, 680);
+
+        fillRound(1020, 326, 810, 420, 8, colors.panel, colors.line);
+        setFont(30, 800);
+        ctx.fillStyle = colors.text;
+        ctx.fillText("Video Frame Scheduling", 1060, 382);
+        const xs = [1110, 1240, 1370, 1500, 1630];
+        xs.forEach((x, i) => {
+          const late = i === 3 && p > 0.55;
+          fillRound(x, 504 + (late ? 34 : 0), 88, 70, 5, late ? "rgba(255,107,107,0.18)" : "rgba(98,214,232,0.12)", late ? colors.red : colors.cyan);
+          setFont(22, 800, true);
+          ctx.fillStyle = late ? colors.red : colors.cyan;
+          ctx.textAlign = "center";
+          ctx.fillText(`F${i + 1}`, x + 44, 548 + (late ? 34 : 0));
+          ctx.textAlign = "left";
+        });
+        line(1090, 620, 1740, 620, colors.line, 4);
+        setFont(24, 700);
+        ctx.fillStyle = colors.red;
+        if (p > 0.55) ctx.fillText("late -> drop / shorten delay", 1390, 690);
+
+        const metrics = ["startup_ms", "download_ms", "queue_ms", "av_diff_ms", "dropped_frames"];
+        metrics.forEach((m, i) => {
+          fillRound(130 + i * 330, 810, 250, 54, 6, colors.panel2, i % 2 ? colors.cyan : colors.green);
+          setFont(22, 700, true);
+          ctx.fillStyle = i % 2 ? colors.cyan : colors.green;
+          ctx.textAlign = "center";
+          ctx.fillText(m, 255 + i * 330, 845);
+          ctx.textAlign = "left";
+        });
+      }
+
+      function renderFrame(t) {
+        t = clamp(t, 0, DURATION);
+        const scene = activeScene(t);
+        const p = localProgress(scene, t);
+        drawBackground(t);
+        drawTitle(scene, p);
+        switch (scene.type) {
+          case "overview": drawOverview(p); break;
+          case "master": drawMaster(p); break;
+          case "media": drawMedia(p); break;
+          case "hlsdemux": drawHLSDemux(p); break;
+          case "pat": drawPAT(p); break;
+          case "pmt": drawPMT(p); break;
+          case "decode": drawDecode(p); break;
+          case "sync": drawSync(p); break;
+        }
+        drawBullets(scene, p);
+        drawProgress(t);
+
+        if (t > DURATION - 1.4) {
+          ctx.save();
+          ctx.globalAlpha = smooth((t - DURATION + 1.4) / 1.4);
+          ctx.fillStyle = "rgba(7,19,18,0.86)";
+          ctx.fillRect(0, 0, W, H);
+          setFont(64, 900);
+          ctx.fillStyle = colors.text;
+          ctx.textAlign = "center";
+          ctx.fillText("HLS 选片段，TS 拆流，PTS/DTS 定时，播放器做同步与输出", W / 2, H / 2);
+          setFont(30, 600);
+          ctx.fillStyle = colors.muted;
+          ctx.fillText("详细版见 articles/hls-ts-playback-flow.md", W / 2, H / 2 + 72);
+          ctx.textAlign = "left";
+          ctx.restore();
+        }
+      }
+
+      async function recordTeachingVideo(duration = DURATION, fps = 30) {
+        renderFrame(0);
+        const mimeTypes = [
+          "video/webm;codecs=vp9",
+          "video/webm;codecs=vp8",
+          "video/webm"
+        ];
+        const mimeType = mimeTypes.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+        const stream = canvas.captureStream(fps);
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 7000000 } : { videoBitsPerSecond: 7000000 });
+        const chunks = [];
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size) chunks.push(event.data);
+        };
+        const done = new Promise((resolve) => {
+          recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "video/webm" }));
+        });
+        let start = performance.now();
+        let frame = 0;
+        const intervalMs = 1000 / fps;
+        const timer = setInterval(() => {
+          const elapsed = (performance.now() - start) / 1000;
+          renderFrame(Math.min(elapsed, duration));
+          frame++;
+          if (elapsed >= duration) {
+            clearInterval(timer);
+            renderFrame(duration);
+            recorder.stop();
+            stream.getTracks().forEach((track) => track.stop());
+          }
+        }, intervalMs);
+        recorder.start(1000);
+        return done;
+      }
+
+      window.__renderFrame = renderFrame;
+      window.__recordTeachingVideo = recordTeachingVideo;
+      window.__HLS_TS_VIDEO_DURATION = DURATION;
+      window.__timelines = window.__timelines || {};
+      window.__timelines["hls-ts-playback"] = {
+        time(value) {
+          renderFrame(Number(value) || 0);
+          return this;
+        },
+        pause() { return this; },
+        duration() { return DURATION; }
+      };
+
+      let previewStart = 0;
+      function preview(now) {
+        if (!previewStart) previewStart = now;
+        const elapsed = ((now - previewStart) / 1000) % DURATION;
+        renderFrame(elapsed);
+        requestAnimationFrame(preview);
+      }
+      renderFrame(0);
+      requestAnimationFrame(preview);
+    })();
+  </script>
+</body>
+</html>
