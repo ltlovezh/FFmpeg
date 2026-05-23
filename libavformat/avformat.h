@@ -495,6 +495,7 @@ typedef struct AVProbeData {
                                         The user or muxer can override this through
                                         AVFormatContext.avoid_negative_ts
                                         */
+#define AVFMT_FIXED_FRAMESIZE 0x80000 /**< Format wants @ref AVCodecParameters.frame_size "fixed size audio frames." */
 
 #define AVFMT_SEEK_TO_PTS   0x4000000 /**< Seeking is based on PTS */
 
@@ -517,10 +518,10 @@ typedef struct AVOutputFormat {
     enum AVCodecID video_codec;    /**< default video codec */
     enum AVCodecID subtitle_codec; /**< default subtitle codec */
     /**
-     * can use flags: AVFMT_NOFILE, AVFMT_NEEDNUMBER,
+     * can use flags: AVFMT_NOFILE, AVFMT_NEEDNUMBER, AVFMT_EXPERIMENTAL,
      * AVFMT_GLOBALHEADER, AVFMT_NOTIMESTAMPS, AVFMT_VARIABLE_FPS,
      * AVFMT_NODIMENSIONS, AVFMT_NOSTREAMS,
-     * AVFMT_TS_NONSTRICT, AVFMT_TS_NEGATIVE
+     * AVFMT_TS_NONSTRICT, AVFMT_TS_NEGATIVE, AVFMT_FIXED_FRAMESIZE
      */
     int flags;
 
@@ -556,9 +557,10 @@ typedef struct AVInputFormat {
     const char *long_name;
 
     /**
-     * Can use flags: AVFMT_NOFILE, AVFMT_NEEDNUMBER, AVFMT_SHOW_IDS,
-     * AVFMT_NOTIMESTAMPS, AVFMT_GENERIC_INDEX, AVFMT_TS_DISCONT, AVFMT_NOBINSEARCH,
-     * AVFMT_NOGENSEARCH, AVFMT_NO_BYTE_SEEK, AVFMT_SEEK_TO_PTS.
+     * Can use flags: AVFMT_NOFILE, AVFMT_NEEDNUMBER, AVFMT_EXPERIMENTAL,
+     * AVFMT_SHOW_IDS, AVFMT_NOTIMESTAMPS, AVFMT_GENERIC_INDEX,
+     * AVFMT_TS_DISCONT, AVFMT_NOBINSEARCH, AVFMT_NOGENSEARCH,
+     * AVFMT_NO_BYTE_SEEK, AVFMT_SEEK_TO_PTS.
      */
     int flags;
 
@@ -1085,12 +1087,29 @@ typedef struct AVStreamGroupLCEVC {
     int height;
 } AVStreamGroupLCEVC;
 
+/**
+ * AVStreamGroupTREF is meant to define the relation between video, audio,
+ * or subtitle streams, and a data stream containing metadata.
+ *
+ * No more than one stream of @ref AVCodecParameters.codec_type "codec_type"
+ * AVMEDIA_TYPE_DATA shall be present.
+ */
+typedef struct AVStreamGroupTREF {
+    const AVClass *av_class;
+
+    /**
+     * Index of the metadata stream in the AVStreamGroup.
+     */
+    unsigned int metadata_index;
+} AVStreamGroupTREF;
+
 enum AVStreamGroupParamsType {
     AV_STREAM_GROUP_PARAMS_NONE,
     AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT,
     AV_STREAM_GROUP_PARAMS_IAMF_MIX_PRESENTATION,
     AV_STREAM_GROUP_PARAMS_TILE_GRID,
     AV_STREAM_GROUP_PARAMS_LCEVC,
+    AV_STREAM_GROUP_PARAMS_TREF,
 };
 
 struct AVIAMFAudioElement;
@@ -1133,6 +1152,7 @@ typedef struct AVStreamGroup {
         struct AVIAMFMixPresentation *iamf_mix_presentation;
         struct AVStreamGroupTileGrid *tile_grid;
         struct AVStreamGroupLCEVC *lcevc;
+        struct AVStreamGroupTREF *tref;
     } params;
 
     /**
@@ -1538,8 +1558,12 @@ typedef struct AVFormatContext {
      * Flags to enable debugging.
      */
     int debug;
-#define FF_FDEBUG_TS        0x0001
-#define FF_FDEBUG_ID3V2     0x0002
+#define AV_FDEBUG_TS        0x0001
+#define AV_FDEBUG_ID3V2     0x0002
+
+#if FF_API_FDEBUG_TS
+#define FF_FDEBUG_TS AV_FDEBUG_TS
+#endif
 
     /**
      * The maximum number of streams.
