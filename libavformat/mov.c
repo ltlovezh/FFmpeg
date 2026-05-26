@@ -5524,6 +5524,12 @@ static int mov_read_custom(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                     sc->start_pad = priming;
             }
         }
+        if (strcmp(mean, "com.apple.iTunes") == 0 &&
+            strcmp(key, "DISCSUBTITLE") == 0) {
+            av_dict_set(&c->fc->metadata, "disc_subtitle", val,
+                        AV_DICT_DONT_STRDUP_VAL);
+            val = NULL;
+        }
         if (strcmp(key, "cdec") != 0) {
             av_dict_set(&c->fc->metadata, key, val,
                         AV_DICT_DONT_STRDUP_KEY | AV_DICT_DONT_STRDUP_VAL);
@@ -11613,6 +11619,12 @@ static int mov_read_packet(AVFormatContext *s, AVPacket *pkt)
 #endif
         else if (st->codecpar->codec_id == AV_CODEC_ID_APV && sample->size > 4) {
             const uint32_t au_size = avio_rb32(sc->pb);
+            if (au_size > sample->size - 4) {
+                av_log(s, AV_LOG_ERROR,
+                       "APV au_size %u exceeds sample body %d\n",
+                       au_size, sample->size - 4);
+                return AVERROR_INVALIDDATA;
+            }
             ret = av_get_packet(sc->pb, pkt, au_size);
         } else
             ret = av_get_packet(sc->pb, pkt, sample->size);

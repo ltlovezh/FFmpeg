@@ -4595,6 +4595,35 @@ static int mov_write_string_tag(AVIOContext *pb, const char *name,
     return size;
 }
 
+static int mov_write_freeform_tag(AVIOContext *pb, const char *mean,
+                                  const char *name, const char *data)
+{
+    if (!data || !data[0])
+        return 0;
+
+    static const char stub_flags[4] = {0, 0, 0, 0};
+
+    int64_t entry_pos = avio_tell(pb);
+    avio_wb32(pb, 0); /* size */
+    ffio_wfourcc(pb, "----"); /* freeform */
+
+    size_t mean_len = strlen(mean);
+    avio_wb32(pb, 12 + mean_len);
+    ffio_wfourcc(pb, "mean");
+    avio_write(pb, &stub_flags[0], sizeof(stub_flags));
+    avio_write(pb, mean, mean_len);
+
+    size_t name_len = strlen(name);
+    avio_wb32(pb, 12 + name_len);
+    ffio_wfourcc(pb, "name");
+    avio_write(pb, &stub_flags[0], sizeof(stub_flags));
+    avio_write(pb, name, name_len);
+
+    mov_write_string_data_tag(pb, data, 0, 1);
+
+    return update_size(pb, entry_pos);
+}
+
 static AVDictionaryEntry *get_metadata_lang(AVFormatContext *s,
                                             const char *tag, int *lang)
 {
@@ -4629,6 +4658,16 @@ static int mov_write_string_metadata(AVFormatContext *s, AVIOContext *pb,
     if (!t)
         return 0;
     return mov_write_string_tag(pb, name, t->value, lang, long_style);
+}
+
+static int mov_write_custom_metadata(AVFormatContext *s, AVIOContext *pb,
+                                     const char *mean, const char *name,
+                                     const char *tag)
+{
+    AVDictionaryEntry *t = av_dict_get(s->metadata, tag, NULL, 0);
+    if (!t)
+        return 0;
+    return mov_write_freeform_tag(pb, mean, name, t->value);
 }
 
 /* iTunes bpm number */
@@ -4819,6 +4858,7 @@ static int mov_write_ilst_tag(AVIOContext *pb, MOVMuxContext *mov,
     mov_write_trkn_tag(pb, mov, s, 0); // track number
     mov_write_trkn_tag(pb, mov, s, 1); // disc number
     mov_write_tmpo_tag(pb, s);
+    mov_write_custom_metadata(s, pb, "com.apple.iTunes", "DISCSUBTITLE", "disc_subtitle");
     return update_size(pb, pos);
 }
 
@@ -5353,7 +5393,12 @@ static int mov_write_moov_tag(AVIOContext *pb, MOVMuxContext *mov,
                 int ret = mov_add_tref_id(mov, tag, track->track_id);
                 if (ret < 0)
                     return ret;
-                //src_trk may have a different timescale than the tmcd track
+            }
+            if (track->nb_src_track) {
+                /* Derive the duration from the first source track, matching
+                 * the convention used by get_pts_range() and the rtp/lvc1
+                 * branches above. The source may use a different timescale. */
+                int src_trk = track->src_track[0];
                 track->track_duration = av_rescale(mov->tracks[src_trk].track_duration,
                                                    track->timescale,
                                                    mov->tracks[src_trk].timescale);
@@ -8579,6 +8624,9 @@ static int mov_init(AVFormatContext *s)
             for (int j = 0; j < stg->nb_streams; j++) {
                 const AVStream *st2 = stg->streams[j];
                 int index = -1;
+
+                if (j == tref->metadata_index)
+                    continue;
 
                 for (int k = 0; k < mov->nb_tracks; k++) {
                     if (mov->tracks[k].st != st2)
