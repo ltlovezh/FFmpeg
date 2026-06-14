@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="464" viewBox="0 0 1000 464" role="img" aria-labelledby="title desc">
+  <title id="title">Format probe loop</title>
+  <desc id="desc">Format probe grows the probe buffer, scores demuxers, applies threshold, and rewinds data.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 12; }
+      .blue { fill: #eff6ff; stroke: #2563eb; }
+      .amber { fill: #fffbeb; stroke: #d97706; }
+      .green { fill: #f0fdf4; stroke: #16a34a; }
+      .red { fill: #fef2f2; stroke: #dc2626; }
+      .label { font: 700 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .sub { font: 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .code { font: 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1e293b; }
+      .arrow { stroke: #334155; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+      .loop { stroke: #64748b; stroke-width: 2.2; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1000" height="464"/>
+  <g transform="scale(0.893)">
+
+  <rect class="box blue" x="52" y="64" width="220" height="135"/>
+  <text class="label" x="88" y="116">逐步读取字节</text>
+  <text class="code" x="78" y="148">2KB -> 4KB -> ...</text>
+  <text class="code" x="78" y="172">max =</text>
+  <text class="code" x="78" y="194">formatprobesize</text>
+
+  <path class="arrow" d="M287 129 H365"/>
+
+  <rect class="box amber" x="380" y="74" width="260" height="110"/>
+  <text class="label" x="424" y="116">所有 demuxer 打分</text>
+  <text class="code" x="406" y="148">read_probe()</text>
+  <text class="sub" x="406" y="170">内容特征 / 扩展名 / MIME</text>
+
+  <path class="arrow" d="M655 129 H735"/>
+
+  <rect class="box red" x="750" y="74" width="260" height="110"/>
+  <text class="label" x="788" y="116">判断是否接受</text>
+  <text class="code" x="776" y="148">unique best score</text>
+  <text class="code" x="776" y="170">score > retry threshold</text>
+
+  <path class="loop" d="M880 200 C880 315 158 315 158 204"/>
+  <text class="sub" x="410" y="314">分数不够或最高分打平：继续读更多数据再评一轮</text>
+
+  <path class="arrow" d="M880 186 V260"/>
+
+  <rect class="box green" x="750" y="276" width="260" height="120"/>
+  <text class="label" x="792" y="318">选出 AVInputFormat</text>
+  <text class="code" x="776" y="350">s->iformat = best_fmt</text>
+  <text class="sub" x="776" y="374">后续交给 demuxer</text>
+
+  <path class="arrow" d="M750 336 H640"/>
+
+  <rect class="box" x="380" y="276" width="245" height="120"/>
+  <text class="label" x="426" y="318">把数据放回去</text>
+  <text class="code" x="406" y="342">ffio_rewind_with_</text>
+  <text class="code" x="406" y="366">probe_data()</text>
+  <text class="sub" x="406" y="392">read_header() 仍从头读</text>
+
+  <rect class="box" x="52" y="430" width="958" height="64"/>
+  <text class="sub" x="86" y="469">这一阶段只回答“这是什么封装格式”，不负责完整解析 duration、codec 参数、分辨率、采样率等流信息。</text>
+  </g>
+</svg>

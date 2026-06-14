@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="375" viewBox="0 0 1000 375" role="img" aria-labelledby="title desc">
+  <title id="title">FFmpeg input probe overview</title>
+  <desc id="desc">Input data flows through format probe, demuxer read_header, and stream info probe.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 12; }
+      .stage-a { fill: #eef6ff; stroke: #2563eb; }
+      .stage-b { fill: #f0fdf4; stroke: #16a34a; }
+      .stage-c { fill: #fff7ed; stroke: #ea580c; }
+      .label { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .sub { font: 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .code { font: 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1e293b; }
+      .arrow { stroke: #334155; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .note { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 1.5; rx: 10; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1000" height="375"/>
+  <g transform="scale(0.893)">
+
+  <rect class="box" x="42" y="132" width="150" height="110"/>
+  <text class="label" x="76" y="178">输入</text>
+  <text class="sub" x="70" y="208">文件 / URL</text>
+
+  <path class="arrow" d="M205 187 H285"/>
+
+  <rect class="box stage-a" x="300" y="72" width="220" height="230"/>
+  <text class="label" x="344" y="128">容器格式探测</text>
+  <text class="code" x="326" y="158">av_probe_input_</text>
+  <text class="code" x="326" y="182">buffer2()</text>
+  <text class="code" x="326" y="210">av_probe_input_</text>
+  <text class="code" x="326" y="234">format3()</text>
+  <text class="sub" x="326" y="262">回答：选 demuxer</text>
+  <text class="code" x="326" y="286">formatprobesize</text>
+
+  <path class="arrow" d="M535 187 H605"/>
+
+  <rect class="box stage-b" x="620" y="112" width="170" height="150"/>
+  <text class="label" x="660" y="158">读容器头</text>
+  <text class="code" x="650" y="196">read_header()</text>
+  <text class="sub" x="646" y="226">创建 AVStream</text>
+
+  <path class="arrow" d="M805 187 H875"/>
+
+  <rect class="box stage-c" x="890" y="72" width="190" height="230"/>
+  <text class="label" x="926" y="128">流信息探测</text>
+  <text class="code" x="914" y="158">find_stream_</text>
+  <text class="code" x="914" y="182">info()</text>
+  <text class="code" x="914" y="210">read_frame_</text>
+  <text class="code" x="914" y="234">internal()</text>
+  <text class="sub" x="914" y="262">回答：流参数</text>
+  <text class="code" x="914" y="286">probesize</text>
+
+  <rect class="note" x="265" y="326" width="590" height="54"/>
+  <text class="sub" x="288" y="359">核心边界：formatprobesize 管“选容器”；probesize 管“补齐流信息”。</text>
+  </g>
+</svg>

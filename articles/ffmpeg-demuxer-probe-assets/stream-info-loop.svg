@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="500" viewBox="0 0 1000 500" role="img" aria-labelledby="title desc">
+  <title id="title">Stream info probe loop</title>
+  <desc id="desc">Stream info probe reads packets, parses or decodes enough data, and stops on information completeness, probesize, analyzeduration, EOF, or error.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 12; }
+      .orange { fill: #fff7ed; stroke: #ea580c; }
+      .blue { fill: #eff6ff; stroke: #2563eb; }
+      .green { fill: #f0fdf4; stroke: #16a34a; }
+      .purple { fill: #faf5ff; stroke: #9333ea; }
+      .label { font: 700 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .sub { font: 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .code { font: 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1e293b; }
+      .arrow { stroke: #334155; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+      .loop { stroke: #64748b; stroke-width: 2.2; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1000" height="500"/>
+  <g transform="scale(0.893)">
+
+  <rect class="box orange" x="56" y="70" width="235" height="130"/>
+  <text class="label" x="92" y="114">已有 demuxer</text>
+  <text class="code" x="82" y="146">read_header()</text>
+  <text class="sub" x="82" y="172">已创建部分 AVStream</text>
+
+  <path class="arrow" d="M306 135 H382"/>
+
+  <rect class="box blue" x="398" y="70" width="245" height="130"/>
+  <text class="label" x="448" y="114">准备分析工具</text>
+  <text class="code" x="424" y="146">parser</text>
+  <text class="code" x="424" y="172">probe decoder</text>
+
+  <path class="arrow" d="M658 135 H734"/>
+
+  <rect class="box purple" x="750" y="70" width="285" height="130"/>
+  <text class="label" x="796" y="114">循环读 packet</text>
+  <text class="code" x="776" y="142">read_frame_</text>
+  <text class="code" x="776" y="166">internal()</text>
+  <text class="sub" x="776" y="190">缓存 packet，供后续复用</text>
+
+  <path class="arrow" d="M892 214 V274"/>
+
+  <rect class="box blue" x="750" y="290" width="285" height="140"/>
+  <text class="label" x="790" y="334">补齐流参数</text>
+  <text class="code" x="776" y="366">extract_extradata()</text>
+  <text class="code" x="776" y="392">try_decode_frame()</text>
+  <text class="sub" x="776" y="416">fps / DTS / delay / codecpar</text>
+
+  <path class="arrow" d="M750 360 H638"/>
+
+  <rect class="box green" x="350" y="290" width="270" height="185"/>
+  <text class="label" x="392" y="334">判断是否停止</text>
+  <text class="code" x="376" y="358">has_codec_</text>
+  <text class="code" x="376" y="382">parameters()</text>
+  <text class="code" x="376" y="408">read_size >= probesize</text>
+  <text class="code" x="376" y="432">duration >=</text>
+  <text class="code" x="376" y="456">analyzeduration</text>
+
+  <path class="loop" d="M350 360 C205 360 205 135 382 135"/>
+  <text class="sub" x="75" y="306">信息还不够：继续读 packet</text>
+
+  <path class="arrow" d="M485 475 V486"/>
+  <rect class="box" x="324" y="500" width="322" height="40"/>
+  <text class="sub" x="360" y="526">收尾：计算帧率、估时长、输出警告</text>
+  </g>
+</svg>
