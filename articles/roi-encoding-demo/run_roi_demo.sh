@@ -10,25 +10,28 @@ WIDTH=640
 HEIGHT=360
 FPS=30
 DURATION=6
-BITRATE_K=220
+BITRATE_K=160
 
 ROI_X=160
 ROI_Y=90
 ROI_W=320
 ROI_H=180
-ROI_QOFFSET="-1/3"
-BACKGROUND_QOFFSET="+1/5"
+ROI_QOFFSET="-1/2"
+BACKGROUND_QOFFSET="+1/3"
 
 BACKGROUND_X=0
 BACKGROUND_Y=0
 BACKGROUND_W=160
 BACKGROUND_H=360
 
-SOURCE_FILTER="testsrc2=size=${WIDTH}x${HEIGHT}:rate=${FPS}:duration=${DURATION}"
+# zoneplate 是高频测试源，比普通色块更容易肉眼观察编码失真。
+SOURCE_FILTER="zoneplate=size=${WIDTH}x${HEIGHT}:rate=${FPS}:duration=${DURATION}:kx2=64:ky2=64:kt=8,format=yuv420p"
 ROI_FILTER="addroi=${ROI_X}:${ROI_Y}:${ROI_W}:${ROI_H}:${ROI_QOFFSET},addroi=0:0:${WIDTH}:${HEIGHT}:${BACKGROUND_QOFFSET}"
 
 BASELINE_MP4="$OUT_DIR/baseline_no_roi.mp4"
 ROI_MP4="$OUT_DIR/roi_center_boost.mp4"
+ROI_CROP_COMPARE_MP4="$OUT_DIR/roi_crop_side_by_side.mp4"
+BACKGROUND_CROP_COMPARE_MP4="$OUT_DIR/background_crop_side_by_side.mp4"
 SUMMARY_MD="$OUT_DIR/summary.md"
 
 require_ffmpeg_feature() {
@@ -85,6 +88,8 @@ require_ffmpeg_feature "libx264 encoder" encoders "libx264"
 require_ffmpeg_feature "addroi filter" filters " addroi "
 require_ffmpeg_feature "psnr filter" filters " psnr "
 require_ffmpeg_feature "crop filter" filters " crop "
+require_ffmpeg_feature "scale filter" filters " scale "
+require_ffmpeg_feature "hstack filter" filters " hstack "
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
@@ -133,6 +138,31 @@ BACKGROUND_DELTA="$(awk -v roi="$ROI_BACKGROUND_PSNR" -v base="$BASELINE_BACKGRO
 BASELINE_SIZE="$(file_size_bytes "$BASELINE_MP4")"
 ROI_SIZE="$(file_size_bytes "$ROI_MP4")"
 
+echo "Generating zoomed side-by-side comparison videos..."
+"$FFMPEG_BIN" -hide_banner -y \
+    -i "$BASELINE_MP4" \
+    -i "$ROI_MP4" \
+    -filter_complex "[0:v]crop=${ROI_CROP},scale=640:360[left];[1:v]crop=${ROI_CROP},scale=640:360[right];[left][right]hstack=inputs=2[v]" \
+    -map "[v]" \
+    -c:v libx264 \
+    -preset veryfast \
+    -crf 18 \
+    -pix_fmt yuv420p \
+    "$ROI_CROP_COMPARE_MP4" \
+    > "$OUT_DIR/roi_crop_compare_encode.txt" 2>&1
+
+"$FFMPEG_BIN" -hide_banner -y \
+    -i "$BASELINE_MP4" \
+    -i "$ROI_MP4" \
+    -filter_complex "[0:v]crop=${BACKGROUND_CROP},scale=640:360[left];[1:v]crop=${BACKGROUND_CROP},scale=640:360[right];[left][right]hstack=inputs=2[v]" \
+    -map "[v]" \
+    -c:v libx264 \
+    -preset veryfast \
+    -crf 18 \
+    -pix_fmt yuv420p \
+    "$BACKGROUND_CROP_COMPARE_MP4" \
+    > "$OUT_DIR/background_crop_compare_encode.txt" 2>&1
+
 {
     echo "# FFmpeg ROI Encoding Demo Result"
     echo
@@ -140,6 +170,8 @@ ROI_SIZE="$(file_size_bytes "$ROI_MP4")"
     echo
     echo "- \`baseline_no_roi.mp4\`: no ROI side data."
     echo "- \`roi_center_boost.mp4\`: center ROI uses \`${ROI_QOFFSET}\`; full-frame fallback background uses \`${BACKGROUND_QOFFSET}\`."
+    echo "- \`roi_crop_side_by_side.mp4\`: center ROI crop, left = baseline, right = ROI encoded."
+    echo "- \`background_crop_side_by_side.mp4\`: background crop, left = baseline, right = ROI encoded."
     echo
     echo "The center ROI rectangle is \`x=${ROI_X}, y=${ROI_Y}, w=${ROI_W}, h=${ROI_H}\`."
     echo "The background verification crop is the left stripe \`x=${BACKGROUND_X}, y=${BACKGROUND_Y}, w=${BACKGROUND_W}, h=${BACKGROUND_H}\`."

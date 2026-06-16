@@ -44,14 +44,19 @@ articles/roi-encoding-demo/out/
 articles/roi-encoding-demo/out/summary.md
 articles/roi-encoding-demo/out/baseline_no_roi.mp4
 articles/roi-encoding-demo/out/roi_center_boost.mp4
+articles/roi-encoding-demo/out/roi_crop_side_by_side.mp4
+articles/roi-encoding-demo/out/background_crop_side_by_side.mp4
 ```
 
 Shell 版做了这些事：
 
-1. 用 `testsrc2` 生成合成测试源。
+1. 用高频 `zoneplate` 生成合成测试源，方便肉眼观察块效应和边缘失真。
 2. 编码 `baseline_no_roi.mp4`，不加 ROI。
 3. 编码 `roi_center_boost.mp4`，中心区域设置负 `qoffset`，全帧背景设置正 `qoffset`。
 4. 用 `crop + psnr` 分别测中心 ROI 区域和左侧背景区域的 PSNR。
+5. 生成两段放大裁剪对比视频，左侧是无 ROI，右侧是有 ROI：
+   - `roi_crop_side_by_side.mp4`：中心 ROI 区域放大对比。
+   - `background_crop_side_by_side.mp4`：背景区域放大对比。
 
 ## C++ API 版
 
@@ -125,5 +130,44 @@ Background crop PSNR: baseline > roi
 ```bash
 rm -rf articles/roi-encoding-demo/out \
        articles/roi-encoding-demo/out-cpp \
+       articles/roi-encoding-demo/out-real \
        articles/roi-encoding-demo/roi_encode_demo
+```
+
+## 真实视频版
+
+如果希望不用合成测试源，可以运行真实视频版。它会下载公开测试视频 `akiyo_cif.y4m`，对人脸/上半身区域做 ROI，对左侧背景区域做对比验证。
+
+运行：
+
+```bash
+./articles/roi-encoding-demo/run_real_video_roi_demo.sh
+```
+
+也可以指定本地真实视频，例如使用自己授权或导出的视频文件：
+
+```bash
+SOURCE_VIDEO=/path/to/input.mp4 \
+DURATION_SECONDS=8 \
+ROI_X=104 ROI_Y=36 ROI_W=148 ROI_H=180 \
+./articles/roi-encoding-demo/run_real_video_roi_demo.sh
+```
+
+脚本会先把本地视频归一化为 `352x288`、`30 fps`、`yuv420p`，再跑同一套 ROI 编码和 PSNR 对比。默认 ROI 坐标适合 `akiyo_cif.y4m`，换视频时需要按主体位置重新设置 `ROI_X`、`ROI_Y`、`ROI_W`、`ROI_H`。
+
+输出目录：
+
+```text
+articles/roi-encoding-demo/out-real/
+```
+
+关键输出：
+
+```text
+articles/roi-encoding-demo/out-real/summary_real.md
+articles/roi-encoding-demo/out-real/real_baseline_no_roi.mp4
+articles/roi-encoding-demo/out-real/real_roi_face_boost.mp4
+articles/roi-encoding-demo/out-real/real_roi_crop_side_by_side.mp4
+articles/roi-encoding-demo/out-real/real_background_crop_side_by_side.mp4
+articles/roi-encoding-demo/out-real/real_full_side_by_side_with_roi_box.mp4
 ```

@@ -350,7 +350,27 @@ Android MediaCodec 和 FFmpeg 软编控制 ROI 的核心差异如下：
 | 工程优势 | 低功耗、低延迟，适合移动端实时硬编 | 跨平台、可控性强，适合离线处理、服务端转码或低分辨率软编 |
 | 工程代价 | Android 15+ 才有标准 API；设备碎片化明显 | CPU、功耗和发热成本高；移动端实时高分辨率压力大 |
 
-## 五、工程落地建议
+## 五、测试视频对比
+
+下面的视频由 `articles/roi-encoding-demo/run_real_video_roi_demo.sh` 生成，使用 Xiph/DERF 公开测试序列 `akiyo_cif.y4m`。这是一个真实人像视频，比纯合成图更接近直播/RTC 场景。
+
+脚本把人脸/上半身区域设为 ROI，把左侧背景作为非重点区域，在约 `70 kbit/s` 下分别编码无 ROI 和有 ROI 两版：
+
+全画面对比，左侧是无 ROI，右侧是有 ROI，红框为 ROI 区域：
+
+<video controls width="960" src="roi-encoding-demo/out-real/real_full_side_by_side_with_roi_box.mp4"></video>
+
+本地实测结果如下：
+
+| 区域 | 无 ROI | 有 ROI | 变化 |
+|---|---:|---:|---:|
+| ROI 裁剪区域 PSNR 平均值 | 34.093291 dB | 36.845103 dB | +2.752 dB |
+| 背景裁剪区域 PSNR 平均值 | 39.304363 dB | 20.501368 dB | -18.803 dB |
+| 文件大小 | 84359 bytes | 94120 bytes | +9761 bytes |
+
+这组真实视频测试中，ROI 版本对人脸/上半身使用负 `qoffset`，对背景使用正 `qoffset`。PSNR 结果符合预期：ROI 区域质量上升，背景区域质量下降，说明 `addroi` 写入的 `AV_FRAME_DATA_REGIONS_OF_INTEREST` side data 已经被 `libx264` 消费。
+
+## 六、工程落地建议
 
 1. Android 先判断 API 和 `FEATURE_Roi`。不要只判断系统版本。API 35 只是有标准入口，具体 codec 仍可能不支持。
 2. ROI offset 从小值开始调。Android 可以从 `-3`、`-6` 开始；FFmpeg `qoffset` 可以从 `-1/10`、`-1/5` 开始。过大的 QP 差会带来边界割裂和码率波动。
