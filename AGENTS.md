@@ -9,6 +9,59 @@ FFmpeg is organized by library and tool boundaries. Core libraries live in
 are under `presets`; regression tests, references, and checkasm code are under
 `tests`. Put future Markdown technical articles in `articles/`.
 
+## Fork Layout & Sync Workflow
+This is a **fork** used for study. `origin` is the personal fork
+(`github.com/ltlovezh/FFmpeg`); `upstream` is canonical FFmpeg. Branch model:
+`master` mirrors upstream untouched, and **`learning`** (the working branch)
+carries all local additions on top of it. Local additions live almost entirely
+under `articles/` (technical write-ups + runnable demos); the C source tree
+should stay close to `master`. `tools/sync-ffmpeg-branches.sh` automates the
+sync (fast-forward `master` from `upstream`, merge into `learning`, push both);
+use `--dry-run` to preview and `--no-push` for local-only. Engine patches to
+`libav*`/`fftools` follow upstream review (mailing list / Forgejo), not GitHub
+PRs.
+
+## Architecture (Cross-File)
+The seven libraries form a strict dependency stack; lower layers never call up:
+- **`libavutil`** — foundation (math, memory, pixel/sample formats, the
+  `AVOptions` system, `av_log`, dictionaries). Everything depends on it.
+- **`libswscale`** / **`libswresample`** — pixel scale/convert and audio
+  resample/mix; depend on `libavutil`.
+- **`libavcodec`** — encoders/decoders/parsers/bitstream filters. Core data
+  unit is `AVPacket` (compressed) ↔ `AVFrame` (raw), via
+  `avcodec_send_packet`/`avcodec_receive_frame`.
+- **`libavformat`** — (de)muxers, protocols, I/O (`AVIOContext`); depends on
+  `libavcodec`.
+- **`libavfilter`** — graph of A/V filters (`AVFilterGraph`); frames flow
+  between linked pads.
+- **`libavdevice`** — capture/playback layered on `libavformat`.
+
+**Component registration is static, not dynamic.** Codecs, formats, filters,
+protocols, and bitstream filters are entries in lists that `configure` filters
+by what is enabled — `libavcodec/allcodecs.c`,
+`libavcodec/bitstream_filters.c`, `libavformat/allformats.c`,
+`libavformat/protocols.c`, `libavfilter/allfilters.c`. Adding a component means
+touching the source file, the registration list, and the per-library
+`Makefile`/`configure` entry. Each library has its own `Makefile` (included by
+the top-level one) listing `OBJS`; arch SIMD lives in subdirs like
+`libavcodec/x86` and `libavcodec/aarch64` with C fallbacks chosen at runtime.
+
+**`fftools/ffmpeg.c` is a multi-threaded engine, not a thin wrapper.** The
+pipeline (demux → decode → filter → encode → mux) is modeled as independent
+components scheduled by `ffmpeg_sched.c` and connected by thread-safe queues
+(`thread_queue.c`, `sync_queue.c` for backpressure and A/V sync). The per-stage
+files are `ffmpeg_demux.c`, `ffmpeg_dec.c`, `ffmpeg_filter.c`, `ffmpeg_enc.c`,
+`ffmpeg_mux.c`; `ffmpeg_opt.c` + `ffmpeg_mux_init.c` parse CLI options into the
+stream/graph setup before the scheduler starts. When changing transcode
+behavior, trace data flow across these files rather than expecting all logic in
+`ffmpeg.c`. `ffprobe.c`/`ffplay.c` are separate, simpler tools; `cmdutils.c`
+holds shared option-parsing helpers.
+
+Note: `configure` is a hand-written script (not autotools/CMake) and builds
+**in-tree**, generating `config.h`, `config_components.h`, and
+`ffbuild/config.mak` — these gate every optional component and do not exist
+until you configure.
+
 ## Build, Test, and Development Commands
 - `./configure`: generate the local build configuration. Use
   `./configure --help` to inspect optional codecs, formats, and external
