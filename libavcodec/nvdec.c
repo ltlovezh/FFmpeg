@@ -627,8 +627,7 @@ int ff_nvdec_start_frame_sep_ref(AVCodecContext *avctx, AVFrame *frame, int has_
             cf->ref_idx_ref = av_refstruct_pool_get(ctx->decoder_pool);
             if (!cf->ref_idx_ref) {
                 av_log(avctx, AV_LOG_ERROR, "No decoder surfaces left\n");
-                ret = AVERROR(ENOMEM);
-                goto fail;
+                return AVERROR(ENOMEM);
             }
         }
         cf->ref_idx = *cf->ref_idx_ref;
@@ -638,9 +637,6 @@ int ff_nvdec_start_frame_sep_ref(AVCodecContext *avctx, AVFrame *frame, int has_
     }
 
     return 0;
-fail:
-    nvdec_fdd_priv_free(cf);
-    return ret;
 }
 
 int ff_nvdec_end_frame(AVCodecContext *avctx)
@@ -764,11 +760,7 @@ int ff_nvdec_frame_params(AVCodecContext *avctx,
         break;
     case 10:
         if (chroma_444) {
-#if FF_API_NVDEC_OLD_PIX_FMTS
-            frames_ctx->sw_format = AV_PIX_FMT_YUV444P16;
-#else
             frames_ctx->sw_format = AV_PIX_FMT_YUV444P10MSB;
-#endif
 #ifdef NVDEC_HAVE_422_SUPPORT
         } else if (cuvid_chroma_format == cudaVideoChromaFormat_422) {
             frames_ctx->sw_format = AV_PIX_FMT_P210;
@@ -779,25 +771,13 @@ int ff_nvdec_frame_params(AVCodecContext *avctx,
         break;
     case 12:
         if (chroma_444) {
-#if FF_API_NVDEC_OLD_PIX_FMTS
-            frames_ctx->sw_format = AV_PIX_FMT_YUV444P16;
-#else
             frames_ctx->sw_format = AV_PIX_FMT_YUV444P12MSB;
-#endif
 #ifdef NVDEC_HAVE_422_SUPPORT
         } else if (cuvid_chroma_format == cudaVideoChromaFormat_422) {
-#if FF_API_NVDEC_OLD_PIX_FMTS
-            frames_ctx->sw_format = AV_PIX_FMT_P216;
-#else
             frames_ctx->sw_format = AV_PIX_FMT_P212;
 #endif
-#endif
         } else {
-#if FF_API_NVDEC_OLD_PIX_FMTS
-            frames_ctx->sw_format = AV_PIX_FMT_P016;
-#else
             frames_ctx->sw_format = AV_PIX_FMT_P012;
-#endif
         }
         break;
     default:

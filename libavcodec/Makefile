@@ -34,8 +34,10 @@ OBJS = ac3_parser.o                                                     \
        avdct.o                                                          \
        packet.o                                                         \
        bitstream.o                                                      \
+       bitstreamfilter.o                                                \
        bitstream_filters.o                                              \
        bsf.o                                                            \
+       bsfgraph.o                                                       \
        codec_desc.o                                                     \
        codec_par.o                                                      \
        d3d11va.o                                                        \
@@ -252,6 +254,7 @@ OBJS-$(CONFIG_APTX_HD_ENCODER)         += aptxenc.o aptx.o
 OBJS-$(CONFIG_APNG_DECODER)            += png.o pngdec.o pngdsp.o
 OBJS-$(CONFIG_APNG_ENCODER)            += png.o pngenc.o
 OBJS-$(CONFIG_APV_DECODER)             += apv_decode.o apv_entropy.o apv_dsp.o
+OBJS-$(CONFIG_APV_VULKAN_ENCODER)      += apv_encode_vulkan.o
 OBJS-$(CONFIG_ARBC_DECODER)            += arbc.o
 OBJS-$(CONFIG_ARGO_DECODER)            += argo.o
 OBJS-$(CONFIG_SSA_DECODER)             += assdec.o ass.o
@@ -442,7 +445,6 @@ OBJS-$(CONFIG_H264_MMAL_DECODER)       += mmaldec.o
 OBJS-$(CONFIG_H264_NVENC_ENCODER)      += nvenc_h264.o nvenc.o
 OBJS-$(CONFIG_H264_OH_DECODER)         += ohcodec.o ohdec.o
 OBJS-$(CONFIG_H264_OH_ENCODER)         += ohcodec.o ohenc.o
-OBJS-$(CONFIG_H264_OMX_ENCODER)        += omx.o
 OBJS-$(CONFIG_H264_QSV_DECODER)        += qsvdec.o
 OBJS-$(CONFIG_H264_QSV_ENCODER)        += qsvenc_h264.o
 OBJS-$(CONFIG_H264_RKMPP_DECODER)      += rkmppdec.o
@@ -587,7 +589,6 @@ OBJS-$(CONFIG_MPEG4_ENCODER)           += mpeg4videoenc.o
 OBJS-$(CONFIG_MPEG4_CUVID_DECODER)     += cuviddec.o
 OBJS-$(CONFIG_MPEG4_MEDIACODEC_DECODER) += mediacodecdec.o
 OBJS-$(CONFIG_MPEG4_MEDIACODEC_ENCODER) += mediacodecenc.o
-OBJS-$(CONFIG_MPEG4_OMX_ENCODER)       += omx.o
 OBJS-$(CONFIG_MPEG4_V4L2M2M_DECODER)   += v4l2_m2m_dec.o
 OBJS-$(CONFIG_MPEG4_V4L2M2M_ENCODER)   += v4l2_m2m_enc.o
 OBJS-$(CONFIG_MPL2_DECODER)            += mpl2dec.o ass.o
@@ -724,9 +725,6 @@ OBJS-$(CONFIG_SNOW_ENCODER)            += snowenc.o snow.o snow_dwt.o           
                                           h263data.o ituh263enc.o \
                                           motion_est.o ratecontrol.o
 OBJS-$(CONFIG_SOL_DPCM_DECODER)        += dpcm.o
-OBJS-$(CONFIG_SONIC_DECODER)           += sonic.o
-OBJS-$(CONFIG_SONIC_ENCODER)           += sonic.o
-OBJS-$(CONFIG_SONIC_LS_ENCODER)        += sonic.o
 OBJS-$(CONFIG_SPEEDHQ_DECODER)         += speedhqdec.o speedhq.o mpeg12.o \
                                           mpeg12data.o
 OBJS-$(CONFIG_SPEEDHQ_ENCODER)         += speedhq.o mpeg12data.o mpeg12enc.o speedhqenc.o
@@ -1332,6 +1330,7 @@ SKIPHEADERS                            += %_tablegen.h                  \
                                           %_tables.h                    \
                                           tableprint.h                  \
                                           tableprint_vlc.h              \
+                                          aaccoder_nmr.h                \
                                           aaccoder_twoloop.h            \
                                           aaccoder_trellis.h            \
                                           aacenc_quantization.h         \

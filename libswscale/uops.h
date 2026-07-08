@@ -78,6 +78,19 @@ enum {
      ((W) ? SWS_COMP(3) : 0))
 };
 
+
+#define ff_sws_comp_mask_str(mask) ff_sws_comp_mask_print(mask, (char[5]){0})
+static inline char *ff_sws_comp_mask_print(SwsCompMask mask, char buf[5])
+{
+    char *ptr = buf;
+    for (int c = 0; c < 4; c++) {
+        if (SWS_COMP_TEST(mask, c))
+            *ptr++ = "xyzw"[c];
+    }
+    *ptr = '\0';
+    return buf;
+}
+
 typedef uint32_t SwsUOpFlags;
 typedef enum SwsUOpFlagBits {
     SWS_UOP_FLAG_NONE = 0,
@@ -96,6 +109,7 @@ typedef enum SwsUOpType {
     SWS_UOP_READ_PACKED,     /* simple packed byte-aligned read */
     SWS_UOP_READ_NIBBLE,     /* fractional read (4 bits) from single plane */
     SWS_UOP_READ_BIT,        /* fractional read (1 bit) from single plane */
+    SWS_UOP_READ_PALETTE,    /* indexed read from palette in plane 1 */
 
     SWS_UOP_WRITE_PLANAR,    /* simple planar byte-aligned write */
     SWS_UOP_WRITE_PACKED,    /* simple packed byte-aligned write */
@@ -176,6 +190,12 @@ typedef struct SwsLinearUOp {
     uint32_t exact; /* mask of coefficients whose product is exact */
 } SwsLinearUOp;
 
+#define SWS_MASK(I, J)  (1 << (5 * (I) + (J)))
+#define SWS_MASK_OFF(I) SWS_MASK(I, 4)
+#define SWS_MASK_ROW(I) (0x1F << (5 * (I)))
+#define SWS_MASK_COL(J) (0x8421 << J)
+#define SWS_MASK_DIAG4  (0x41041)
+
 typedef struct SwsDitherUOp {
     uint8_t y_offset[4];
     uint8_t size_log2;
@@ -251,17 +271,5 @@ int ff_sws_uop_list_append(SwsUOpList *uops, SwsUOp *uop);
  */
 int ff_sws_ops_translate(SwsContext *ctx, const SwsOpList *ops,
                          SwsUOpFlags flags, SwsUOpList *uops);
-
-/**
- * Generate a set of boilerplate C preprocessor macros for describing and
- * programmatically iterating over all possible SwsUOps.
- *
- * This function can be quite slow as it iterates over every possible
- * combination of pixel formats and flags.
- *
- * Returns 0 or a negative error code. On success, an allocated string is
- * returned via `out_str`, and must be av_free()'d by the caller.
- */
-int ff_sws_uops_macros_gen(char **out_str);
 
 #endif
