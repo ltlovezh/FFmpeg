@@ -101,3 +101,6 @@ pull requests are not part of the project review process.
 Do not enable or add external dependencies casually; non-system dependencies are
 disabled by default. Preserve license compatibility, and add a proper license
 header to every new source file using a nearby file as the template.
+
+## 技术文章
+- 把markdown技术文章放到`articles/`目录下
