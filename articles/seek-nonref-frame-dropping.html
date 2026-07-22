@@ -1,0 +1,1882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>点播 Seek 性能优化：丢帧的原理、判定与硬解落地（交互版）</title>
+<meta name="description" content="seek-nonref-frame-dropping.md 的可视化交互版：参考链 3D 依赖图、NAL 头字节检查器、四作用点流水线等">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+/* ---------- tokens ---------- */
+:root {
+  --bg: #f4f7fb;
+  --bg2: #ffffff;
+  --panel: #ffffff;
+  --panel2: #eef2f8;
+  --line: #dbe2ee;
+  --text: #24303f;
+  --muted: #5d6b80;
+  --ref: #0f9d6e;      /* 参考帧 */
+  --nonref: #e06a13;   /* 非参考帧 */
+  --key: #5b5bd6;      /* IDR/关键帧 */
+  --bad: #d63b47;      /* 损坏/花屏 */
+  --warn: #b7791f;     /* CRA/RASL/警告 */
+  --accent: #0e7fa8;   /* 强调 */
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--sans); font-size: 16px; line-height: 1.75;
+  overflow-x: hidden;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: var(--mono); font-size: .88em; background: #e7edf6; padding: .1em .35em; border-radius: 4px; color: #1f2c4d; }
+pre { font-family: var(--mono); font-size: 13px; line-height: 1.6; overflow-x: auto; }
+pre code { background: none; padding: 0; color: inherit; }
+strong { color: #101a28; }
+
+/* ---------- nav ---------- */
+#topnav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: #ffffffdd; backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+#navprog { height: 2px; background: linear-gradient(90deg, var(--accent), var(--key)); width: 0%; }
+#topnav .row { display: flex; align-items: center; gap: 4px; padding: 8px 16px; overflow-x: auto; scrollbar-width: none; }
+#topnav .row::-webkit-scrollbar { display: none; }
+#topnav .brand { font-weight: 700; font-size: 13px; color: var(--text); white-space: nowrap; margin-right: 10px; }
+#topnav .brand em { color: var(--accent); font-style: normal; }
+#topnav a.ch {
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+  padding: 3px 9px; border-radius: 99px; border: 1px solid transparent;
+}
+#topnav a.ch:hover { color: var(--text); text-decoration: none; }
+#topnav a.ch.on { color: var(--accent); border-color: #0e7fa855; background: #0e7fa812; }
+
+/* ---------- hero ---------- */
+.hero {
+  position: relative; min-height: 92vh;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  text-align: center; padding: 110px 20px 60px; overflow: hidden;
+}
+#hero-bg { position: absolute; inset: 0; opacity: .26; }
+#hero-bg canvas { display: block; }
+.hero::after {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at center, transparent 30%, var(--bg) 85%);
+  pointer-events: none;
+}
+.hero > * { position: relative; z-index: 2; }
+.hero .kicker { font-size: 13px; letter-spacing: .35em; color: var(--accent); margin-bottom: 18px; }
+.hero h1 { font-size: clamp(28px, 5vw, 54px); line-height: 1.25; color: #101a28; max-width: 850px; }
+.hero h1 .grad {
+  background: linear-gradient(90deg, var(--accent), var(--key));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hero .sub { margin-top: 18px; color: var(--muted); max-width: 640px; font-size: 15px; }
+.hero .stats { display: flex; gap: 14px; margin-top: 40px; flex-wrap: wrap; justify-content: center; }
+.stat-card {
+  background: #ffffffd9; border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 26px; min-width: 150px; backdrop-filter: blur(6px);
+  box-shadow: 0 6px 22px rgba(30, 51, 84, .08);
+}
+.stat-card .num { font-size: 30px; font-weight: 800; color: #101a28; font-family: var(--mono); }
+.stat-card .num em { font-style: normal; color: var(--accent); }
+.stat-card .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.hero .hint { margin-top: 46px; font-size: 12px; color: var(--muted); animation: bob 2.2s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(6px); } }
+
+/* ---------- chapters ---------- */
+main { max-width: 1060px; margin: 0 auto; padding: 0 20px 80px; }
+section.chapter { padding: 72px 0 20px; border-top: 1px solid var(--line); }
+.chap-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+.chap-head .no {
+  font-family: var(--mono); font-size: 13px; color: var(--accent);
+  border: 1px solid #0e7fa855; border-radius: 8px; padding: 2px 9px; flex-shrink: 0;
+}
+.chap-head h2 { font-size: clamp(21px, 3vw, 28px); color: #101a28; }
+.chapter h3 { font-size: 17px; color: #101a28; margin: 26px 0 10px; }
+.chapter p { margin: 10px 0; color: #3d4a5c; }
+.chapter p.lead { font-size: 17px; color: var(--text); }
+.chapter ul, .chapter ol { margin: 10px 0 10px 22px; color: #3d4a5c; }
+.chapter li { margin: 5px 0; }
+.note {
+  border-left: 3px solid var(--accent); background: #0e7fa80d;
+  padding: 10px 16px; border-radius: 0 10px 10px 0; margin: 16px 0; font-size: 14px; color: #3d4a5c;
+}
+.note.warn { border-color: var(--warn); background: #b7791f10; }
+.note.good { border-color: var(--ref); background: #0f9d6e0d; }
+
+/* ---------- module panel ---------- */
+.module {
+  background: var(--panel);
+  border: 1px solid var(--line); border-radius: 18px;
+  padding: 20px; margin: 26px 0;
+  box-shadow: 0 10px 30px rgba(30, 51, 84, .07);
+}
+.module .m-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.module .m-title { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.module .m-title .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.module .m-tip { font-size: 12px; color: var(--muted); }
+.controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+/* switch */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text); user-select: none; }
+.switch input { display: none; }
+.switch .tr {
+  width: 36px; height: 20px; border-radius: 99px; background: #c7d2e2; position: relative; transition: background .2s; flex-shrink: 0;
+}
+.switch .tr::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(20,35,60,.35); transition: transform .2s, background .2s;
+}
+.switch input:checked + .tr { background: #0d9488; }
+.switch input:checked + .tr::after { transform: translateX(16px); background: #fff; }
+
+/* buttons & segmented */
+.btn {
+  font-size: 13px; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+  padding: 6px 14px; border-radius: 9px; cursor: pointer; font-family: inherit;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: #0e7490; border-color: #0e7490; color: #fff; }
+.seg { display: inline-flex; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button {
+  font-size: 12px; font-family: var(--mono); color: var(--muted); background: none; border: none;
+  padding: 7px 12px; cursor: pointer; border-right: 1px solid var(--line);
+}
+.seg button:last-child { border-right: none; }
+.seg button.on { background: #0e7fa81a; color: var(--accent); }
+.seg button.on.danger { background: #d63b471a; color: var(--bad); }
+
+/* tabs */
+.tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.tabs button {
+  font-size: 13px; color: var(--muted); background: none; border: none; cursor: pointer;
+  padding: 8px 16px; border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: inherit;
+}
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tabpane { display: none; }
+.tabpane.on { display: block; }
+
+/* tables */
+table.t {
+  width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 14px 0;
+}
+table.t th, table.t td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+table.t th { background: var(--panel2); color: var(--text); font-weight: 600; white-space: nowrap; }
+table.t td { color: #3d4a5c; }
+.tscroll { overflow-x: auto; }
+
+/* badges & legend */
+.badge { display: inline-block; font-size: 11.5px; font-family: var(--mono); padding: 2px 9px; border-radius: 99px; border: 1px solid; white-space: nowrap; }
+.badge.ref    { color: var(--ref); border-color: #0f9d6e55; background: #0f9d6e10; }
+.badge.nonref { color: var(--nonref); border-color: #e06a1355; background: #e06a1310; }
+.badge.key    { color: var(--key); border-color: #5b5bd655; background: #5b5bd610; }
+.badge.bad    { color: var(--bad); border-color: #d63b4755; background: #d63b4710; }
+.badge.warn   { color: var(--warn); border-color: #b7791f55; background: #b7791f10; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 10px; }
+.legend .it { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 11px; height: 11px; border-radius: 3px; }
+
+/* code block */
+.codeblock { position: relative; background: #0d1119; border: 1px solid #223; border-radius: 12px; padding: 14px 16px; margin: 14px 0; color: #b9c6da; }
+.codeblock .copy-btn {
+  position: absolute; top: 8px; right: 8px; font-size: 11px; color: #9fb0c8;
+  background: #1b2233; border: 1px solid #2c3850; border-radius: 7px; padding: 3px 10px; cursor: pointer;
+}
+.codeblock .copy-btn:hover { color: #fff; border-color: #4dc3e8; }
+.codeblock .cm { color: #64748b; } /* comment */
+.codeblock .kw { color: #93c5fd; } /* keyword */
+.codeblock .fn { color: #fbbf24; }
+.codeblock .st { color: #86efac; }
+
+/* 3D canvas wrap */
+.gl-wrap { position: relative; border-radius: 14px; overflow: hidden; background: radial-gradient(ellipse at 50% 0%, #1a2236, #0b0e14 75%); border: 1px solid var(--line); }
+.gl-wrap canvas { display: block; width: 100%; }
+.gl-fallback {
+  display: none; padding: 40px 24px; text-align: center; color: #a8b6cc; font-size: 14px;
+}
+.gl-wrap.fallback .gl-fallback { display: block; }
+.gl-hint { position: absolute; left: 12px; bottom: 10px; font-size: 11px; color: #ffffff66; pointer-events: none; }
+
+/* toast */
+.toast {
+  position: absolute; top: 14px; left: 50%; transform: translate(-50%, -8px); opacity: 0;
+  font-size: 13px; padding: 8px 18px; border-radius: 99px; border: 1px solid; pointer-events: none;
+  transition: opacity .25s, transform .25s; white-space: nowrap; z-index: 5; backdrop-filter: blur(6px);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.good { color: #34d399; border-color: #34d39966; background: #052e2acc; }
+.toast.bad  { color: #f87171; border-color: #f8717166; background: #3b0a0acc; }
+
+/* ---------- M1 timeline ---------- */
+#m1-timeline { user-select: none; touch-action: none; }
+#m1-timeline svg { display: block; width: 100%; height: auto; cursor: pointer; }
+.m1-grid { display: grid; grid-template-columns: 1fr 300px; gap: 18px; align-items: start; }
+@media (max-width: 800px) { .m1-grid { grid-template-columns: 1fr; } }
+.m1-stats { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 13px; }
+.m1-stats .row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed #29334a88; }
+.m1-stats .row:last-child { border-bottom: none; }
+.m1-stats .v { font-family: var(--mono); color: var(--text); }
+.race { margin-top: 14px; }
+.race .r-row { margin: 9px 0; }
+.race .r-lbl { font-size: 11.5px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 4px; }
+.race .r-lbl .rv { font-family: var(--mono); }
+.race .r-bar { height: 10px; border-radius: 99px; background: #dde4ef; overflow: hidden; }
+.race .r-fill { height: 100%; border-radius: 99px; width: 0%; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+
+/* ---------- M2 ---------- */
+#m2-wrap canvas { cursor: grab; }
+#m2-wrap canvas:active { cursor: grabbing; }
+.quad td { cursor: default; transition: background .15s; }
+.quad td[data-frames]:not([data-frames=""]) { cursor: pointer; }
+.quad td.hl { background: #0e7fa815; }
+
+/* ---------- M3 bits ---------- */
+.m3-top { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.m3-top select, .m3-top input[type="text"] {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 9px;
+  padding: 7px 10px; font-family: var(--mono); font-size: 13px;
+}
+.m3-top input[type="text"] { width: 90px; }
+#m3-bits { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 4px; }
+.byte-group { display: flex; gap: 3px; padding: 8px; background: #0d1119; border: 1px solid var(--line); border-radius: 12px; }
+.bitcell { text-align: center; cursor: pointer; user-select: none; }
+.bitcell .b {
+  width: 34px; height: 40px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 17px; font-weight: 700; border-radius: 8px;
+  border: 1px solid var(--line); color: #fff; background: #161c2a; transition: all .15s;
+}
+.bitcell:hover .b { border-color: #fff5; }
+.bitcell .f { font-size: 9.5px; color: #8ea1bb; margin-top: 4px; font-family: var(--mono); }
+.bitcell.f-forb .b { border-bottom: 3px solid #64748b; }
+.bitcell.f-ref  .b { border-bottom: 3px solid var(--ref); }
+.bitcell.f-type .b { border-bottom: 3px solid var(--key); }
+.bitcell.f-lay  .b { border-bottom: 3px solid #64748b; }
+.bitcell.f-tid  .b { border-bottom: 3px solid var(--warn); }
+.bitcell.parity .b { box-shadow: 0 0 0 2px #f08a3e, 0 0 14px #f08a3e88; }
+@media (max-width: 700px) { .bitcell .b { width: 26px; height: 34px; font-size: 14px; } }
+#m3-verdict { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-height: 34px; }
+#m3-verdict .big {
+  font-size: 14px; font-weight: 700; padding: 6px 16px; border-radius: 10px; border: 1px solid;
+}
+#m3-fields { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; }
+#m3-fields .fld { background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; padding: 5px 12px; font-family: var(--mono); color: var(--muted); }
+#m3-fields .fld b { color: var(--text); font-weight: 600; }
+#m3-pairs td.hl { background: #e06a1315; }
+
+/* ---------- M4 ---------- */
+.m4-grid { display: grid; grid-template-columns: 1fr 250px; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .m4-grid { grid-template-columns: 1fr; } }
+.m4-side { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.m4-side h4 { font-size: 12.5px; color: var(--text); margin-bottom: 10px; }
+.gate-list .switch { display: flex; margin: 9px 0; }
+.cost { margin-top: 16px; }
+.cost .c-row { margin: 10px 0; }
+.cost .c-lbl { font-size: 11.5px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 4px; }
+.cost .c-lbl .cv { font-family: var(--mono); color: var(--text); }
+.cost .c-bar { height: 9px; border-radius: 99px; background: #dde4ef; overflow: hidden; }
+.cost .c-fill { height: 100%; border-radius: 99px; transition: width .4s; }
+#m4-warn { display: none; margin-top: 12px; }
+#m4-warn.show { display: block; }
+
+/* ---------- M5 ---------- */
+.m5-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 6px; }
+@media (max-width: 760px) { .m5-grid { grid-template-columns: 1fr; } }
+.m5-col { position: relative; background: #f2f5fa; border: 1px solid var(--line); border-radius: 14px; padding: 16px 16px 18px; overflow: hidden; min-height: 330px; }
+.m5-col h4 { font-size: 13px; color: var(--text); text-align: center; margin-bottom: 4px; }
+.m5-col .sub4 { font-size: 11px; color: var(--muted); text-align: center; margin-bottom: 12px; font-family: var(--mono); }
+.m5-box {
+  position: relative; z-index: 2; border: 1px solid var(--line); border-radius: 10px;
+  background: #ffffffee; padding: 8px 12px; margin: 26px auto 0; width: 82%;
+  font-size: 12px; text-align: center; color: #3d4a5c;
+  box-shadow: 0 3px 10px rgba(30, 51, 84, .06);
+}
+.m5-box small { display: block; color: var(--muted); font-size: 10.5px; font-family: var(--mono); }
+.m5-box.sw-layer { border-color: #0f9d6e88; }
+.m5-box.hw-layer { border-color: #5b5bd688; }
+.m5-box.blackbox { border-color: #d63b4788; }
+.m5-dot { position: absolute; z-index: 1; width: 14px; height: 14px; border-radius: 4px; pointer-events: none; }
+.m5-verdict { text-align: center; margin-top: 18px; font-size: 13px; font-weight: 700; }
+.m5-note { font-size: 11px; color: var(--muted); text-align: center; margin-top: 4px; min-height: 16px; }
+
+/* ---------- M6 stepper ---------- */
+.m6-flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 16px; }
+.m6-node {
+  font-size: 12px; padding: 7px 13px; border-radius: 99px; border: 1px solid var(--line);
+  background: var(--panel2); color: var(--muted); transition: all .2s; white-space: nowrap;
+}
+.m6-node.on { color: #0b5a78; border-color: var(--accent); background: #0e7fa815; box-shadow: 0 0 12px #0e7fa826; }
+.m6-node.warn-on { color: #7c5310; border-color: var(--warn); background: #b7791f15; }
+.m6-arrow { color: #9aa8bd; font-size: 12px; }
+.m6-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 860px) { .m6-grid { grid-template-columns: 1fr; } }
+#m6-code { background: #0d1119; border: 1px solid var(--line); border-radius: 12px; padding: 12px 0; }
+#m6-code .ln { display: block; padding: 1px 16px; white-space: pre; color: #93a1b8; }
+#m6-code .ln.on { background: #22d3ee1a; color: #fff; border-left: 3px solid var(--accent); padding-left: 13px; }
+#m6-strip { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+.m6-fr {
+  width: 44px; height: 54px; border-radius: 9px; border: 1.5px solid #c8d2e2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-family: var(--mono); font-size: 12.5px; color: var(--text); background: #fff; transition: all .25s; position: relative;
+  box-shadow: 0 2px 6px rgba(30, 51, 84, .06);
+}
+.m6-fr .st { font-size: 9px; color: var(--muted); }
+.m6-fr.cur { border-color: var(--accent); box-shadow: 0 0 10px #0e7fa833; transform: translateY(-3px); }
+.m6-fr.dropped { opacity: .35; border-style: dashed; }
+.m6-fr.decoded { border-color: var(--ref); }
+.m6-fr.noout { border-color: #8b96ab; }
+.m6-fr.norender { border-color: var(--nonref); }
+.m6-fr.shown { border-color: var(--ref); background: #0f9d6e18; box-shadow: 0 0 14px #0f9d6e44; }
+#m6-desc { min-height: 52px; font-size: 13.5px; color: #3d4a5c; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+#m6-desc b { color: var(--accent); }
+
+/* ---------- flip cards ---------- */
+.flips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 20px 0; }
+.flip { perspective: 900px; height: 176px; cursor: pointer; }
+.flip .inner { position: relative; width: 100%; height: 100%; transition: transform .5s; transform-style: preserve-3d; }
+.flip.flipped .inner { transform: rotateY(180deg); }
+.flip .face {
+  position: absolute; inset: 0; backface-visibility: hidden; border-radius: 14px;
+  border: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; justify-content: center;
+}
+.flip .front { background: linear-gradient(150deg, #ffffff, #f0f4fa); box-shadow: 0 6px 18px rgba(30, 51, 84, .07); }
+.flip .front .no { font-family: var(--mono); font-size: 11px; color: var(--bad); margin-bottom: 8px; }
+.flip .front .t { font-size: 14.5px; font-weight: 700; color: #101a28; line-height: 1.5; }
+.flip .front .cue { margin-top: auto; font-size: 11px; color: var(--muted); }
+.flip .back { background: #f7fafd; transform: rotateY(180deg); font-size: 12.5px; color: #3d4a5c; line-height: 1.65; justify-content: flex-start; padding-top: 18px; }
+
+/* ---------- footer ---------- */
+footer { border-top: 1px solid var(--line); text-align: center; padding: 34px 20px 44px; color: var(--muted); font-size: 12.5px; }
+footer .links { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<nav id="topnav">
+  <div id="navprog"></div>
+  <div class="row">
+    <span class="brand">Seek<em>·</em>丢帧优化</span>
+    <a class="ch" href="#ch1">1 为什么慢</a>
+    <a class="ch" href="#ch2">2 哪些帧能丢</a>
+    <a class="ch" href="#ch3">3 如何判定</a>
+    <a class="ch" href="#ch4">4 在哪里丢</a>
+    <a class="ch" href="#ch5">5 硬解落地</a>
+    <a class="ch" href="#ch6">6 完整流程</a>
+    <a class="ch" href="#ch7">7 踩坑</a>
+    <a class="ch" href="#ch8">8 总结</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div id="hero-bg"></div>
+  <div class="kicker">VOD SEEK OPTIMIZATION</div>
+  <h1>点播 Seek 性能优化<br><span class="grad">丢帧的原理、判定与硬解落地</span></h1>
+  <p class="sub">拖动进度条之后，画面多久能出来？追帧区间里有一半的帧，其实根本不用解码。
+    本页把「参考链」「NAL 头判定」「四个丢帧作用点」做成可动手操作的 3D 演示。</p>
+  <div class="stats">
+    <div class="stat-card"><div class="num">1.5<em>~</em>2<em>x</em></div><div class="lbl">追帧提速（零画质代价）</div></div>
+    <div class="stat-card"><div class="num">O(<em>1</em>)</div><div class="lbl">可丢判定：NAL 头 1~2 字节</div></div>
+    <div class="stat-card"><div class="num"><em>4</em> 个</div><div class="lbl">流水线丢帧作用点</div></div>
+  </div>
+  <div class="hint">▼ 向下滚动，从成本模型开始</div>
+</header>
+
+<main>
+
+<!-- ==================== CH 1 ==================== -->
+<section class="chapter" id="ch1">
+  <div class="chap-head"><span class="no">01</span><h2>Seek 为什么慢：追帧的成本模型</h2></div>
+  <p class="lead">视频只能从关键帧（IDR/IRAP）开始解码。Seek 到任意时间点 T 时，播放器要先回退到
+    ≤T 的关键帧，再把中间所有帧解码一遍「追」到 T——这段 preroll 才是 Seek 耗时的大头。</p>
+  <p>成本可以粗略写成：<code>seek_latency ≈ 定位/IO + N_preroll × t_decode + 首帧渲染</code>。
+    点播 GOP 普遍 2~10 秒（几十到几百帧），优化只有两个方向：<strong>少解码</strong>（丢帧，本文主题）
+    和<strong>快解码</strong>（超实时吞吐，第 5 章）。</p>
+
+  <div class="module" id="m1">
+    <div class="m-head">
+      <div class="m-title"><span class="dot"></span>M1 · Seek 成本模拟器</div>
+      <div class="m-tip">在时间轴上拖动/点击选择 Seek 目标位置</div>
+    </div>
+    <div class="m1-grid">
+      <div>
+        <div id="m1-timeline"></div>
+        <div class="legend">
+          <span class="it"><span class="sw" style="background:var(--key)"></span>关键帧 I</span>
+          <span class="it"><span class="sw" style="background:var(--ref)"></span>参考帧 P / 参考 B</span>
+          <span class="it"><span class="sw" style="background:var(--nonref)"></span>非参考帧</span>
+          <span class="it"><span class="sw" style="background:#ccd6e5; border:1px dashed #8fa0b8"></span>被跳过（不解码）</span>
+        </div>
+        <div class="controls" style="margin-top:14px">
+          <label class="switch"><input type="checkbox" id="m1-drop-nonref"><span class="tr"></span>丢非参考帧（NONREF，无损）</label>
+          <label class="switch"><input type="checkbox" id="m1-nonkey"><span class="tr"></span>NONKEY 粗放快进（只停关键帧）</label>
+        </div>
+      </div>
+      <div class="m1-stats">
+        <div class="row"><span>Seek 目标</span><span class="v" id="m1-target">—</span></div>
+        <div class="row"><span>回退关键帧</span><span class="v" id="m1-key">—</span></div>
+        <div class="row"><span>区间总帧数</span><span class="v" id="m1-total">—</span></div>
+        <div class="row"><span>实际需解码</span><span class="v" id="m1-decode">—</span></div>
+        <div class="row"><span>估算耗时 <span style="color:var(--muted)">(8ms/帧)</span></span><span class="v" id="m1-time">—</span></div>
+        <div class="race">
+          <div class="r-row">
+            <div class="r-lbl"><span>不丢帧</span><span class="rv" id="m1-race-a-v">—</span></div>
+            <div class="r-bar"><div class="r-fill" id="m1-race-a" style="background:#64748b"></div></div>
+          </div>
+          <div class="r-row">
+            <div class="r-lbl"><span>当前策略</span><span class="rv" id="m1-race-b-v">—</span></div>
+            <div class="r-bar"><div class="r-fill" id="m1-race-b" style="background:linear-gradient(90deg,var(--accent),var(--ref))"></div></div>
+          </div>
+        </div>
+        <div id="m1-note" style="font-size:11.5px;color:var(--muted);margin-top:10px;min-height:32px"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== CH 2 ==================== -->
+<section class="chapter" id="ch2">
+  <div class="chap-head"><span class="no">02</span><h2>哪些帧可以丢：参考性才是唯一判据</h2></div>
+  <p class="lead">解码器内部维护 DPB（Decoded Picture Buffer）：会被后续帧引用的帧留在里面当参考，
+    不被引用的帧输出即弃。<strong>丢掉非参考帧，解码器甚至不知道它存在过</strong>；
+    丢掉参考帧，错误会沿参考链扩散成花屏。</p>
+  <p>很多资料把「丢非参考帧」等同于「丢 B 帧」，这是错的。从依赖关系的<strong>两个相反方向</strong>看这对概念：
+    <strong>I/B/P 回答「它需要谁」</strong>——当前帧怎样参考别的帧（I 不做帧间预测、P 用一个参考列表、
+    B 用两个参考列表），由 slice header 的 <code>slice_type</code> 决定；
+    <strong>参考性回答「以后谁需要它」</strong>——当前帧是否会被别的帧参考（参考帧留在 DPB
+    供人预测，非参考帧输出即释放），写在 NAL 头里。一个描述当前帧的输入，一个描述它能否成为
+    别人的输入，互不等价——组合出的六种情况在真实码流里都可能存在：</p>
+  <p><strong>B-pyramid：为什么 B 帧也能成为参考帧。</strong>传统 B 帧只参考两侧的 I/P 锚点，
+    自己是不被引用的「叶子」。B-pyramid 把连续 B 帧组织成层级：先让中间的 B2 参考 I0/P4
+    并保留在 DPB 里，再让两侧的 B1/B3 参考它——B2 仍是 B 帧（用两个参考列表预测自己），
+    却同时成了别的 B 帧的参考。本文把 I0/P4 所在锚点称为<strong>第 0 层（金字塔底部）</strong>、
+    B2 称为<strong>第 1 层（中间参考层）</strong>、B1/B3 称为<strong>第 2 层（上层叶子）</strong>；
+    层号只是讲解用的简化编号，不等同于 HEVC 的 <code>TemporalId</code>。叶子 B 用上距离更近的
+    参考帧，压缩效率更高；代价是部分 B 变成参考帧，不能再随意丢弃。x264/x265 默认开启 b-pyramid。
+    在下面的 3D 场景里切到<strong>「金字塔分层」</strong>排列，可以直观看到这个层级结构。</p>
+
+  <div class="module" id="m2">
+    <div class="m-head">
+      <div class="m-title"><span class="dot"></span>M2 · 参考链 3D 依赖图</div>
+      <div class="controls">
+        <div class="seg" id="m2-arrange">
+          <button data-mode="disp" class="on">显示顺序</button>
+          <button data-mode="dec">解码顺序</button>
+          <button data-mode="pyr">金字塔分层</button>
+        </div>
+        <button class="btn" id="m2-reset">↺ 重置</button>
+      </div>
+    </div>
+    <div class="gl-wrap" id="m2-wrap" style="height:420px">
+      <div class="toast" id="m2-toast"></div>
+      <div class="gl-hint">拖动旋转 · 滚轮缩放 · 悬停看依赖 · 点击帧 = 丢弃它</div>
+      <div class="gl-fallback">⚠️ Three.js 未能加载（需联网访问 jsDelivr CDN）或当前环境不支持 WebGL。<br>
+        示意：mini-GOP <code>I0 B1 B2 B3 P4</code> 中，B2 是被 B1/B3 引用的「参考 B」，
+        丢弃它会沿参考链扩散花屏；B1/B3 是非参考帧，可安全丢弃。</div>
+    </div>
+    <p class="m-tip" style="margin-top:10px">试试：先点掉 <b style="color:var(--nonref)">B1</b>（非参考，安全落地）；
+      重置后再点 <b style="color:var(--ref)">B2</b>（参考 B，看花屏如何沿箭头扩散）；
+      再试试 <b style="color:var(--ref)">P4</b>（B1/B2/B3 全部花屏）。
+      切到<b>「金字塔分层」</b>可以看到 锚点 → 参考 B → 叶子 的层级依赖
+      （箭头 A → B 表示「A 解码时参考 B」，层号越高、对低层的依赖越多）。</p>
+    <div class="tscroll">
+      <table class="t quad" id="m2-quad">
+        <tr><th></th><th>参考帧（进 DPB）</th><th>非参考帧（可安全丢）</th></tr>
+        <tr><th>I</th>
+          <td data-frames="I0">IDR（标准规定必为参考）、普通 I</td>
+          <td data-frames="">理论存在，实践罕见</td></tr>
+        <tr><th>P</th>
+          <td data-frames="P4">绝大多数 P</td>
+          <td data-frames="">少见（低延迟/时域分层编码）</td></tr>
+        <tr><th>B</th>
+          <td data-frames="B2"><strong>b-pyramid 的中层参考 B（默认开启！）</strong></td>
+          <td data-frames="B1,B3">最常见的可丢帧</td></tr>
+      </table>
+    </div>
+    <div class="note">收益上限由编码配置决定：b-pyramid 开启时连续 3 个 B 里只有 2 个非参考，
+      典型点播流非参考帧占比约 <b>1/3 ~ 1/2</b>；关闭 b-pyramid 后 B 帧不再相互参考，
+      可丢的非参考 B 通常更多。</div>
+  </div>
+</section>
+
+<!-- ==================== CH 3 ==================== -->
+<section class="chapter" id="ch3">
+  <div class="chap-head"><span class="no">03</span><h2>如何判定：NAL 头 1~2 字节就够了</h2></div>
+  <p class="lead">两个标准都把参考性写在了 NAL 头里——判定<strong>不需要解码，甚至不需要解析
+    slice header</strong>。这正是「解码前丢帧」可行的根本原因。</p>
+  <ul>
+    <li><strong>H.264</strong>：看 1 字节 NAL 头里的 <code>nal_ref_idc</code>（2 bit）。
+      <code>== 0</code> → 非参考帧。标准约束同帧所有 slice 一致，且 IDR/SPS/PPS 必须非 0，
+      所以读 AU 第一个 VCL NAL 即可判定整帧。</li>
+    <li><strong>H.265</strong>：看 2 字节 NAL 头里的 <code>nal_unit_type</code>（6 bit）。
+      VCL 类型 0~15 成对出现，<strong>偶数（<code>_N</code> 后缀）= 非参考</strong>。
+      FFmpeg 的判定函数就是这张表：<code>ff_hevc_nal_is_nonref()</code>
+      （libavcodec/hevc/hevcdec.h:653）。</li>
+  </ul>
+
+  <div class="module" id="m3">
+    <div class="m-head">
+      <div class="m-title"><span class="dot"></span>M3 · NAL 头字节检查器</div>
+      <div class="m-tip">点击 bit 翻转，或选预设 / 输入 hex</div>
+    </div>
+    <div class="tabs">
+      <button id="m3-tab-h264" class="on">H.264（1 字节）</button>
+      <button id="m3-tab-h265">H.265（2 字节）</button>
+    </div>
+    <div class="m3-top">
+      <label style="font-size:12.5px;color:var(--muted)">预设
+        <select id="m3-preset"></select>
+      </label>
+      <label style="font-size:12.5px;color:var(--muted)">hex
+        <input type="text" id="m3-hex" spellcheck="false">
+      </label>
+    </div>
+    <div id="m3-bits"></div>
+    <div id="m3-fields"></div>
+    <div id="m3-verdict"></div>
+    <div id="m3-h265-extra" style="display:none">
+      <div class="tscroll">
+        <table class="t" id="m3-pairs">
+          <tr><th>可丢（_N，偶数）</th><th>值</th><th>参考版（_R，奇数）</th><th>值</th></tr>
+          <tr data-n="0"><td>TRAIL_N</td><td>0</td><td>TRAIL_R</td><td>1</td></tr>
+          <tr data-n="2"><td>TSA_N</td><td>2</td><td>TSA_R</td><td>3</td></tr>
+          <tr data-n="4"><td>STSA_N</td><td>4</td><td>STSA_R</td><td>5</td></tr>
+          <tr data-n="6"><td>RADL_N</td><td>6</td><td>RADL_R</td><td>7</td></tr>
+          <tr data-n="8"><td>RASL_N</td><td>8</td><td>RASL_R</td><td>9</td></tr>
+          <tr data-n="10"><td>VCL_N10/12/14（保留）</td><td>10/12/14</td><td>VCL_R11/13/15（保留）</td><td>11/13/15</td></tr>
+        </table>
+      </div>
+      <div class="note warn"><b>两个 HEVC 特有细节</b>：① <code>_N</code> 严格含义是「同一时域子层内非参考」——
+        绝大多数点播流只有一个时域层（tid 恒 0），此时 <code>_N</code> 就是真非参考，FFmpeg 软解也直接丢；
+        多时域层流严格只保证最高层 <code>_N</code> 安全。② Seek 落到 <b>CRA(21)</b>（open-GOP 关键帧）上时，
+        其后的 <b>RASL(8/9)</b> 帧引用了 CRA 之前的帧，<b>必须丢弃</b>——这是正确性要求，不丢会花屏。</div>
+    </div>
+
+    <h3 style="margin-top:24px">整包判定：~30 行判断一个 AVPacket 能否整包丢弃</h3>
+    <div class="codeblock">
+      <button class="copy-btn" data-copy="cp-droppable">复制</button>
+<pre id="cp-droppable"><code><span class="cm">/* 返回 1：该 packet 的 VCL 全部非参考，可整包丢弃（AVCC/HVCC 长度前缀格式） */</span>
+<span class="kw">static int</span> <span class="fn">packet_droppable</span>(<span class="kw">const uint8_t</span> *data, <span class="kw">int</span> size,
+                            <span class="kw">int</span> is_hevc, <span class="kw">int</span> nal_len_size <span class="cm">/* 一般为 4 */</span>)
+{
+    <span class="kw">int</span> i = 0;
+    <span class="kw">while</span> (i + nal_len_size &lt; size) {
+        <span class="kw">int</span> nal_size = 0;
+        <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; nal_len_size; j++)
+            nal_size = (nal_size &lt;&lt; 8) | data[i + j];
+        <span class="kw">const uint8_t</span> *nal = data + i + nal_len_size;
+        <span class="kw">if</span> (nal_size &lt;= 0 || i + nal_len_size + nal_size &gt; size)
+            <span class="kw">break</span>;                                  <span class="cm">/* 数据异常，保守不丢 */</span>
+
+        <span class="kw">if</span> (is_hevc) {
+            <span class="kw">int</span> type = (nal[0] &gt;&gt; 1) &amp; 0x3F;
+            <span class="kw">if</span> (type &lt;= 15)                         <span class="cm">/* VCL */</span>
+                <span class="kw">return</span> (type &amp; 1) == 0;             <span class="cm">/* _N 偶数 → 可丢 */</span>
+        } <span class="kw">else</span> {
+            <span class="kw">int</span> type = nal[0] &amp; 0x1F;
+            <span class="kw">if</span> (type == 1 || type == 5)             <span class="cm">/* VCL */</span>
+                <span class="kw">return</span> ((nal[0] &gt;&gt; 5) &amp; 0x3) == 0;  <span class="cm">/* ref_idc==0 → 可丢 */</span>
+        }
+        i += nal_len_size + nal_size;               <span class="cm">/* SPS/PPS/SEI：跳过继续找 */</span>
+    }
+    <span class="kw">return</span> 0;
+}</code></pre>
+    </div>
+    <p>不想碰码流时还有三个现成判定层：<strong>容器层</strong>
+      <code>AV_PKT_FLAG_DISPOSABLE</code>（MP4 <code>sdtp</code> box → libavformat/mov.c:11692，零成本但不保证存在）、
+      <strong>解析层</strong> <code>av_parser_parse2()</code>（不解码填出 pict_type/key_frame）、
+      <strong>解码层</strong> <code>AVFrame.pict_type</code>（只能用于解码后丢帧）。</p>
+  </div>
+</section>
+
+<!-- ==================== CH 4 ==================== -->
+<section class="chapter" id="ch4">
+  <div class="chap-head"><span class="no">04</span><h2>在哪里丢：流水线上的四个作用点</h2></div>
+  <p class="lead">同一帧可以在流水线四个位置被丢掉，<strong>越早丢省得越多</strong>。
+    ①② 只能丢非参考帧但收益最大；③④ 能丢任何帧（解码照做、只是不出去），是精确 Seek 的兜底。</p>
+
+  <div class="module" id="m4">
+    <div class="m-head">
+      <div class="m-title"><span class="dot"></span>M4 · 四作用点 3D 流水线</div>
+      <div class="m-tip">packet 沿传送带流动，开关闸门看它们在哪里落下</div>
+    </div>
+    <div class="m4-grid">
+      <div class="gl-wrap" id="m4-wrap" style="height:360px">
+        <div class="gl-hint">拖动旋转视角</div>
+        <div class="gl-fallback">⚠️ Three.js 未能加载或不支持 WebGL。<br>
+          示意：Demux → <b>①喂入前丢包</b> → 解码器（<b>②skip_frame</b>）→ <b>③解码不输出</b> → 输出 →
+          <b>④输出不渲染</b> → 上屏；①② 只拦非参考帧，③④ 拦所有追帧区间的帧。</div>
+      </div>
+      <div class="m4-side">
+        <h4>丢帧闸门</h4>
+        <div class="gate-list">
+          <label class="switch"><input type="checkbox" id="m4-g1"><span class="tr"></span>① 喂入前丢包（非参考）</label>
+          <label class="switch"><input type="checkbox" id="m4-g3"><span class="tr"></span>③ 解码不输出（DECODE_ONLY）</label>
+          <label class="switch"><input type="checkbox" id="m4-g4"><span class="tr"></span>④ 输出不渲染（release false）</label>
+        </div>
+        <h4 style="margin-top:16px">skip_frame 阶梯（作用点②）</h4>
+        <div class="seg" id="m4-ladder">
+          <button data-level="0" class="on">OFF</button><button data-level="8">NONREF</button><button data-level="16">BIDIR</button><button data-level="32">NONKEY</button>
+        </div>
+        <div id="m4-ladder-badge" style="margin-top:8px"></div>
+        <div class="cost">
+          <div class="c-row"><div class="c-lbl"><span>解码成本</span><span class="cv" id="m4-cv-dec">100%</span></div>
+            <div class="c-bar"><div class="c-fill" id="m4-cf-dec" style="background:var(--key);width:100%"></div></div></div>
+          <div class="c-row"><div class="c-lbl"><span>输出成本</span><span class="cv" id="m4-cv-out">100%</span></div>
+            <div class="c-bar"><div class="c-fill" id="m4-cf-out" style="background:var(--accent);width:100%"></div></div></div>
+          <div class="c-row"><div class="c-lbl"><span>渲染成本</span><span class="cv" id="m4-cv-rnd">100%</span></div>
+            <div class="c-bar"><div class="c-fill" id="m4-cf-rnd" style="background:var(--ref);width:100%"></div></div></div>
+        </div>
+        <div class="note warn" id="m4-warn" style="font-size:12px"><b>参考链已破坏！</b>
+          BIDIR 会误伤参考 B、NONKEY 只留关键帧——下游帧沿参考链花屏（红色方块）。
+          只有 NONREF 档是无损的。</div>
+      </div>
+    </div>
+    <div class="tscroll">
+      <table class="t">
+        <tr><th>作用点</th><th>省掉的成本</th><th>适用帧</th><th>依赖</th></tr>
+        <tr><td>① 喂入前丢包</td><td>解码 + 输出 + 渲染，全省</td><td>仅非参考帧</td><td>无（任何解码器都可用）</td></tr>
+        <tr><td>② 解码器内跳过 <code>skip_frame</code></td><td>同上（省掉 slice 解码）</td><td>仅非参考帧（NONREF 级）</td><td>FFmpeg 软解 / hwaccel（h264dec.c:626、hevcdec.c:3766）</td></tr>
+        <tr><td>③ 解码不输出</td><td>输出拷贝/回调 + 渲染</td><td><b>任何帧</b>（参考链由解码器维持）</td><td>API 34 <code>DECODE_ONLY</code> / VT <code>DoNotOutputFrame</code></td></tr>
+        <tr><td>④ 输出不渲染</td><td>仅渲染（纹理上传/GL）</td><td>任何帧</td><td>无</td></tr>
+      </table>
+    </div>
+    <div class="note">软解追帧还可叠加：<code>skip_loop_filter = AVDISCARD_NONREF</code>
+      （只跳非参考帧的去块滤波，零风险；设 ALL 收益更大但参考帧有累积漂移）+
+      <code>AV_CODEC_FLAG2_FAST</code>。</div>
+  </div>
+</section>
+
+<!-- ==================== CH 5 ==================== -->
+<section class="chapter" id="ch5">
+  <div class="chap-head"><span class="no">05</span><h2>硬解落地：为什么 iOS 顺手、Android 要自己动手</h2></div>
+  <p class="lead">FFmpeg 接入硬解有两种模型，<code>skip_frame</code> 行为截然不同：
+    <strong>hwaccel 模型</strong>（VideoToolbox/VAAPI/NVDEC）里 NAL 解析和丢弃决策在 FFmpeg 软件层完成，
+    被丢的 NAL 根本不会提交给硬件；<strong>wrapper 模型</strong>（MediaCodec）整包透传给系统黑盒，
+    <code>skip_frame</code> 完全无效——丢帧必须发生在喂入之前。</p>
+
+  <div class="module" id="m5">
+    <div class="m-head">
+      <div class="m-title"><span class="dot"></span>M5 · hwaccel vs wrapper</div>
+      <div class="controls">
+        <label class="switch"><input type="checkbox" id="m5-toggle"><span class="tr"></span>设置 skip_frame = AVDISCARD_NONREF</label>
+      </div>
+    </div>
+    <div class="m5-grid">
+      <div class="m5-col" id="m5-left">
+        <h4>hwaccel 模型（iOS VideoToolbox）</h4>
+        <div class="sub4">-hwaccel videotoolbox</div>
+        <div class="m5-box">AVPacket<small>demux 输出的 AU</small></div>
+        <div class="m5-box sw-layer">FFmpeg 软件层：拆 NAL、解析头<small>h264dec.c:626 / hevcdec.c:3766 在这里 continue</small></div>
+        <div class="m5-box hw-layer">硬件解码<small>hwaccel start_frame / decode_slice</small></div>
+        <div class="m5-verdict" id="m5-verdict-l" style="color:var(--muted)">—</div>
+        <div class="m5-note" id="m5-note-l"></div>
+      </div>
+      <div class="m5-col" id="m5-right">
+        <h4>wrapper 模型（Android MediaCodec）</h4>
+        <div class="sub4">mediacodecdec.c</div>
+        <div class="m5-box">AVPacket<small>demux 输出的 AU</small></div>
+        <div class="m5-box">wrapper：整包透传，不拆 NAL<small>源码中没有任何 skip_frame 处理</small></div>
+        <div class="m5-box blackbox">系统 MediaCodec（黑盒）<small>NAL 解析 + 解码都在里面</small></div>
+        <div class="m5-verdict" id="m5-verdict-r" style="color:var(--muted)">—</div>
+        <div class="m5-note" id="m5-note-r"></div>
+      </div>
+    </div>
+
+    <h3>平台手段速查</h3>
+    <div class="tabs">
+      <button id="m5-tab-android" class="on">Android MediaCodec</button>
+      <button id="m5-tab-ios">iOS VideoToolbox</button>
+    </div>
+    <div class="tabpane on" id="m5-pane-android">
+      <div class="tscroll">
+        <table class="t">
+          <tr><th>层次</th><th>API</th><th>版本</th><th>效果</th></tr>
+          <tr><td>① 喂入前丢包</td><td>非参考 AU 不 <code>queueInputBuffer</code></td><td>全版本</td><td>省解码+输出+渲染，首选</td></tr>
+          <tr><td>③ 解码不输出</td><td><code>BUFFER_FLAG_DECODE_ONLY</code></td><td>API 34+</td><td>参考帧追帧不出帧（专为 seek preroll 设计）</td></tr>
+          <tr><td>④ 输出不渲染</td><td><code>releaseOutputBuffer(index, false)</code></td><td>全版本</td><td>省 updateTexImage + GL</td></tr>
+        </table>
+      </div>
+      <div class="codeblock">
+        <button class="copy-btn" data-copy="cp-android">复制</button>
+<pre id="cp-android"><code><span class="cm">// ① 喂入前丢包（追帧区间内）</span>
+<span class="kw">if</span> (inPreroll &amp;&amp; isNonRefAU(sampleData, isHevc)) {
+    extractor.advance();          <span class="cm">// 跳过，不喂</span>
+    <span class="kw">continue</span>;
+}
+
+<span class="cm">// ③ API 34+：参考帧也只解不出</span>
+<span class="kw">int</span> flags = inPreroll ? MediaCodec.BUFFER_FLAG_DECODE_ONLY : 0;
+codec.queueInputBuffer(inIndex, 0, size, ptsUs, flags);
+
+<span class="cm">// ④ 兜底：追帧期间输出不渲染</span>
+<span class="kw">boolean</span> render = info.presentationTimeUs &gt;= seekTargetUs;
+codec.releaseOutputBuffer(outIndex, render);
+
+<span class="cm">// 超实时解码提示（API 23+，厂商实现质量参差）</span>
+format.setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE);
+format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime */</span>);</code></pre>
+      </div>
+    </div>
+    <div class="tabpane" id="m5-pane-ios">
+      <p style="font-size:13.5px"><b>路线 A：FFmpeg hwaccel</b> —— 直接
+        <code>avctx-&gt;skip_frame = AVDISCARD_NONREF</code>，一行完成解码前丢帧，无须额外工作。<br>
+        <b>路线 B：自建 VTDecompressionSession</b> —— 喂入前丢包照常适用；追帧区间内的参考帧用
+        <code>kVTDecodeFrame_DoNotOutputFrame</code>：</p>
+      <div class="codeblock">
+        <button class="copy-btn" data-copy="cp-ios">复制</button>
+<pre id="cp-ios"><code>VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression;
+<span class="kw">if</span> (inPreroll)
+    flags |= kVTDecodeFrame_DoNotOutputFrame;  <span class="cm">/* 解码入 DPB，不回调输出 */</span>
+VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
+
+<span class="cm">/* 离线/追帧场景：允许系统按吞吐优先调度 */</span>
+VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
+                     kCFBooleanFalse);</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== CH 6 ==================== -->
+<section class="chapter" id="ch6">
+  <div class="chap-head"><span class="no">06</span><h2>把它们串起来：精确 Seek 的完整流程</h2></div>
+  <p class="lead">定位关键帧 → flush → 追帧循环（非参考帧丢包、参考帧只解不出、输出不渲染）→
+    追上目标恢复正常、首帧上屏。下面按真实解码顺序步进走一遍。</p>
+
+  <div class="module" id="m6">
+    <div class="m-head">
+      <div class="m-title"><span class="dot"></span>M6 · 精确 Seek 步进器</div>
+      <div class="controls">
+        <button class="btn" id="m6-prev">← 上一步</button>
+        <button class="btn primary" id="m6-next">下一步 →</button>
+        <button class="btn" id="m6-play">▶ 自动播放</button>
+      </div>
+    </div>
+    <div class="m6-flow" id="m6-flow">
+      <span class="m6-node" data-n="seek">av_seek_frame(BACKWARD)</span><span class="m6-arrow">→</span>
+      <span class="m6-node" data-n="flush">flush 解码器</span><span class="m6-arrow">→</span>
+      <span class="m6-node" data-n="read">读包判定</span><span class="m6-arrow">→</span>
+      <span class="m6-node" data-n="drop">①丢包(非参考/RASL)</span><span class="m6-arrow">/</span>
+      <span class="m6-node" data-n="feed">喂入(③只解不出)</span><span class="m6-arrow">→</span>
+      <span class="m6-node" data-n="out">输出判定</span><span class="m6-arrow">→</span>
+      <span class="m6-node" data-n="norender">④不渲染</span><span class="m6-arrow">→</span>
+      <span class="m6-node" data-n="done">恢复 + 首帧上屏</span>
+    </div>
+    <div class="m6-grid">
+      <div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">mini-GOP（显示顺序）· Seek 目标 = <b style="color:var(--text)">B3</b></div>
+        <div id="m6-strip"></div>
+        <div id="m6-desc">点「下一步」开始步进。</div>
+      </div>
+      <div id="m6-code"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== CH 7 ==================== -->
+<section class="chapter" id="ch7">
+  <div class="chap-head"><span class="no">07</span><h2>踩坑清单</h2></div>
+  <p class="lead">七个真实世界会踩的坑，点击卡片翻面看细节。</p>
+  <div class="flips" id="flips">
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 01</div><div class="t">「丢 B 帧」≠「丢非参考帧」</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back">x264/x265 默认开 b-pyramid，参考 B 约占 B 帧一半；按 <code>pict_type</code> 丢帧必花屏。
+        必须按 NAL 头判参考性（H.264 <code>nal_ref_idc</code>、H.265 <code>_N</code> 类型）。</div>
+    </div></div>
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 02</div><div class="t">HEVC open-GOP：CRA + RASL</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back">Seek 到 CRA(21) 后，其后的 RASL 帧（8/9）引用了不存在的前向参考，<b>必须丢弃</b>——
+        这是正确性问题，不丢会花屏。闭 GOP（IDR）流无此问题。</div>
+    </div></div>
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 03</div><div class="t">HEVC 时域分层的 _N 语义</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back"><code>_N</code> 严格含义是「同子层非参考」；单时域层流（绝大多数点播）可无脑丢，
+        多时域层流只保证最高 TemporalId 层的 <code>_N</code> 绝对安全。</div>
+    </div></div>
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 04</div><div class="t">DISPOSABLE flag 不保证存在</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back"><code>AV_PKT_FLAG_DISPOSABLE</code> 来自 MP4 的 <code>sdtp</code> box，
+        封装器不写就没有；判定逻辑要有 NAL 头解析兜底。</div>
+    </div></div>
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 05</div><div class="t">MediaCodec 上 skip_frame 无效</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back">wrapper 模型不拆 NAL，FFmpeg 的 <code>skip_frame</code> 设了也白设；
+        丢帧必须发生在 <code>queueInputBuffer</code> 之前。</div>
+    </div></div>
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 06</div><div class="t">BIDIR 及以上会断参考链</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back">skip_frame 阶梯里只有 <code>NONREF</code> 无损；
+        <code>BIDIR</code> 误伤参考 B、<code>NONKEY</code> 只留关键帧，
+        只能配合「丢到下一个关键帧」的粗放策略使用。</div>
+    </div></div>
+    <div class="flip"><div class="inner">
+      <div class="face front"><div class="no">PITFALL 07</div><div class="t">参考帧跳 loop filter 有漂移</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face back"><code>skip_loop_filter=ALL</code> 收益更大但参考帧不做去块滤波会累积误差，
+        首帧可能轻微失真；保守做法是只设到 <code>NONREF</code> 档（零风险）。</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- ==================== CH 8 ==================== -->
+<section class="chapter" id="ch8">
+  <div class="chap-head"><span class="no">08</span><h2>总结与源码索引</h2></div>
+  <h3>Q1 · 丢非参考帧，解码器支持吗？</h3>
+  <p>FFmpeg 软解和 hwaccel 模型原生支持（<code>skip_frame = AVDISCARD_NONREF</code>，
+    丢弃发生在 NAL 解析层，硬件无感）；MediaCodec 这类 wrapper 不支持——但也不需要：
+    非参考帧的定义保证了「喂入前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节。
+    解码前丢不掉的参考帧，用「解码不输出」（<code>DECODE_ONLY</code> /
+    <code>DoNotOutputFrame</code>）和「输出不渲染」（<code>releaseOutputBuffer(false)</code>）两层兜底。</p>
+  <h3>Q2 · 参考帧与 I/B/P 的关系？</h3>
+  <p>正交的两个维度：<code>slice_type</code> 决定 I/B/P（怎么预测自己），NAL 头决定参考性（是否被引用）。
+    H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型的 <code>_N</code> 后缀（偶数）；
+    B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧。<strong>安全丢帧的唯一判据是参考性，不是帧类型。</strong></p>
+
+  <h3>FFmpeg 源码索引</h3>
+  <div class="tscroll">
+    <table class="t">
+      <tr><th>主题</th><th>位置</th></tr>
+      <tr><td>AVDiscard 阶梯定义</td><td><code>libavcodec/defs.h:223</code></td></tr>
+      <tr><td>H.264 NAL 级 skip_frame</td><td><code>libavcodec/h264dec.c:626</code></td></tr>
+      <tr><td>H.264 帧级 skip_frame 阶梯</td><td><code>libavcodec/h264_slice.c:2141</code></td></tr>
+      <tr><td>H.264 skip_loop_filter</td><td><code>libavcodec/h264_slice.c:1962</code></td></tr>
+      <tr><td>H.264 slice_type → pict_type</td><td><code>libavcodec/h264data.c:37</code>、<code>libavcodec/h264_parser.c:364</code></td></tr>
+      <tr><td>HEVC 非参考 NAL 判定</td><td><code>libavcodec/hevc/hevcdec.h:653</code></td></tr>
+      <tr><td>HEVC NAL 级 skip_frame</td><td><code>libavcodec/hevc/hevcdec.c:3766</code></td></tr>
+      <tr><td>HEVC parser slice_type 映射</td><td><code>libavcodec/hevc/parser.c:143</code></td></tr>
+      <tr><td>filter_units BSF discard 选项</td><td><code>libavcodec/bsf/filter_units.c:251</code></td></tr>
+      <tr><td>CBS 丢弃判定（H.264/H.265）</td><td><code>libavcodec/cbs_h264.c:647</code>、<code>libavcodec/cbs_h265.c:660</code></td></tr>
+      <tr><td>MP4 sdtp → DISPOSABLE flag</td><td><code>libavformat/mov.c:11692</code></td></tr>
+      <tr><td>MediaCodec 渲染控制 API</td><td><code>libavcodec/mediacodec.h:86</code></td></tr>
+    </table>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="links">
+    📄 文字版：<a href="seek-nonref-frame-dropping.md">seek-nonref-frame-dropping.md</a>
+    &nbsp;·&nbsp; 源码定位基于本仓库当前代码
+  </div>
+  <div>点播 Seek 性能优化 · 交互可视化版 · Three.js 由 jsDelivr CDN 加载</div>
+</footer>
+
+<script>
+/* ================================================================
+   共享数据层：全页所有模块共用同一个 mini-GOP 模型
+   ================================================================ */
+const C = {
+  key: '#818cf8', ref: '#34d399', nonref: '#fb923c',
+  bad: '#f87171', warn: '#fbbf24', accent: '#22d3ee', dim: '#39415a',
+};
+/* 显示顺序 I0 B1 B2 B3 P4（bf=3 + b-pyramid 单组）；dec = 解码顺序；deps = 引用了谁 */
+const GOP = [
+  { id:'I0', t:'I', ref:true,  key:true,  deps:[],          dec:0 },
+  { id:'B1', t:'B', ref:false, key:false, deps:['I0','B2'], dec:3 },
+  { id:'B2', t:'B', ref:true,  key:false, deps:['I0','P4'], dec:2 },
+  { id:'B3', t:'B', ref:false, key:false, deps:['B2','P4'], dec:4 },
+  { id:'P4', t:'P', ref:true,  key:false, deps:['I0'],      dec:1 },
+];
+const GOP_BY_ID = Object.fromEntries(GOP.map(f => [f.id, f]));
+/* CL：浅色页面用的加深变体（3D 暗色舞台仍用 C 的亮色） */
+const CL = {
+  key: '#5b5bd6', ref: '#0f9d6e', nonref: '#e06a13',
+  bad: '#d63b47', warn: '#b7791f', accent: '#0e7fa8', dim: '#ccd6e5',
+};
+function colorOf(f) { return f.key ? C.key : f.ref ? C.ref : C.nonref; }
+function colorOfL(f) { return f.key ? CL.key : f.ref ? CL.ref : CL.nonref; }
+/* 丢掉 id 后，沿参考链受影响（花屏）的帧集合 */
+function transitiveDependents(id) {
+  const out = new Set(); const queue = [id];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const f of GOP)
+      if (f.deps.includes(cur) && !out.has(f.id)) { out.add(f.id); queue.push(f.id); }
+  }
+  return out;
+}
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+/* 可见性驱动的 rAF 循环：模块离屏自动暂停 */
+function visLoop(el, tick) {
+  let vis = false, last = 0;
+  new IntersectionObserver(es => { vis = es[0].isIntersecting; }, { threshold: 0.05 }).observe(el);
+  (function frame(ts) {
+    requestAnimationFrame(frame);
+    if (!vis || document.hidden) { last = ts; return; }
+    const dt = Math.min(0.05, (ts - last) / 1000 || 0); last = ts;
+    tick(dt, ts / 1000);
+  })(0);
+}
+
+/* ================================================================
+   通用 UI：导航进度、章节高亮、翻转卡片、复制按钮、四象限联动
+   ================================================================ */
+(() => {
+  const prog = $('#navprog'), links = $$('#topnav a.ch');
+  addEventListener('scroll', () => {
+    const h = document.documentElement;
+    prog.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + '%';
+  }, { passive: true });
+  /* 带锚点进入时瞬时定位（避免整页平滑滚动动画） */
+  if (location.hash) addEventListener('load', () => {
+    const t = document.querySelector(location.hash);
+    if (t) t.scrollIntoView({ behavior: 'instant', block: 'start' });
+  });
+  const io = new IntersectionObserver(es => {
+    es.forEach(e => {
+      if (!e.isIntersecting) return;
+      links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+    });
+  }, { rootMargin: '-35% 0px -55% 0px' });
+  $$('section.chapter').forEach(s => io.observe(s));
+
+  $$('.flip').forEach(f => f.addEventListener('click', () => f.classList.toggle('flipped')));
+
+  $$('.copy-btn').forEach(btn => btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($('#' + btn.dataset.copy).innerText);
+      btn.textContent = '✓ 已复制';
+    } catch { btn.textContent = '复制失败'; }
+    setTimeout(() => btn.textContent = '复制', 1400);
+  }));
+
+  /* 四象限表 ↔ M2 3D 场景联动（3D 侧注册 window.__m2Highlight） */
+  $$('#m2-quad td[data-frames]').forEach(td => {
+    const ids = td.dataset.frames ? td.dataset.frames.split(',') : [];
+    if (!ids.length) return;
+    td.addEventListener('mouseenter', () => { td.classList.add('hl'); window.__m2Highlight?.(ids); });
+    td.addEventListener('mouseleave', () => { td.classList.remove('hl'); window.__m2Highlight?.(null); });
+  });
+})();
+
+/* ================================================================
+   M1 · Seek 成本模拟器
+   ================================================================ */
+(() => {
+  const N = 120, GOPLEN = 48, FPS = 24, TDEC = 8; /* ms/帧 */
+  /* 帧型：与 GOP 模型同款 b-pyramid 花纹 [B_n, B_ref, B_n, P] */
+  function frameOf(i) {
+    if (i % GOPLEN === 0) return { key: true, ref: true, t: 'I' };
+    const g = (i % GOPLEN - 1) % 4;
+    if (g === 3) return { key: false, ref: true, t: 'P' };
+    return { key: false, ref: g === 1, t: 'B' };
+  }
+  const wrap = $('#m1-timeline');
+  const W = 960, H = 130, x0 = 8, bw = (W - 16) / N;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  wrap.appendChild(svg);
+  const bars = [];
+  let html = '';
+  for (let i = 0; i < N; i++) {
+    const f = frameOf(i);
+    const h = f.key ? 62 : f.t === 'P' ? 46 : f.ref ? 40 : 28;
+    html += `<rect class="fr" data-i="${i}" x="${(x0 + i * bw).toFixed(2)}" y="${100 - h}" width="${(bw * 0.72).toFixed(2)}" height="${h}" rx="1.5"></rect>`;
+  }
+  svg.innerHTML =
+    `<rect id="m1-region" y="10" height="98" fill="#0e7fa80f" stroke="#0e7fa833" rx="4"></rect>` + html +
+    `<path id="m1-arc" fill="none" stroke="${CL.accent}" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m1-ah)"></path>
+     <defs><marker id="m1-ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+       <path d="M0 0 L8 4 L0 8 z" fill="${CL.accent}"></path></marker></defs>
+     <line id="m1-cursor" y1="6" y2="112" stroke="#24303f" stroke-width="1.6"></line>
+     <text id="m1-cursor-t" y="124" fill="#24303f" font-size="11" text-anchor="middle" font-family="monospace"></text>
+     <text id="m1-key-t" y="124" fill="${CL.key}" font-size="11" text-anchor="middle" font-family="monospace"></text>`;
+  $$('rect.fr', svg).forEach(r => bars.push(r));
+
+  const st = { target: 67 };
+  const el = {
+    drop: $('#m1-drop-nonref'), nonkey: $('#m1-nonkey'),
+    target: $('#m1-target'), key: $('#m1-key'), total: $('#m1-total'),
+    decode: $('#m1-decode'), time: $('#m1-time'), note: $('#m1-note'),
+    ra: $('#m1-race-a'), rb: $('#m1-race-b'), rav: $('#m1-race-a-v'), rbv: $('#m1-race-b-v'),
+  };
+
+  function render() {
+    const T = st.target, key = Math.floor(T / GOPLEN) * GOPLEN;
+    const nonkey = el.nonkey.checked, drop = el.drop.checked;
+    const total = T - key + 1;
+    let decode, landed = T;
+    if (nonkey) { decode = 1; landed = key; }
+    else if (drop) {
+      decode = 1; /* 目标帧必须解码（即使它是非参考帧） */
+      for (let i = key; i < T; i++) if (frameOf(i).ref) decode++;
+    } else decode = total;
+
+    bars.forEach((r, i) => {
+      const f = frameOf(i);
+      const inPre = i >= key && i <= T;
+      let fill = f.key ? CL.key : f.ref ? CL.ref : CL.nonref, op = 0.92;
+      if (i > T || i < key) op = 0.35;
+      if (inPre && nonkey && i > key) { fill = CL.dim; op = 1; }
+      else if (inPre && !nonkey && drop && !f.ref && i !== T) { fill = CL.dim; op = 1; }
+      if (i === landed) { op = 1; }
+      r.setAttribute('fill', fill); r.setAttribute('opacity', op);
+    });
+    const xT = x0 + T * bw + bw * 0.36, xK = x0 + key * bw + bw * 0.36;
+    $('#m1-region', svg).setAttribute('x', xK - 3);
+    $('#m1-region', svg).setAttribute('width', Math.max(2, xT - xK + 6));
+    $('#m1-cursor', svg).setAttribute('x1', xT); $('#m1-cursor', svg).setAttribute('x2', xT);
+    const ct = $('#m1-cursor-t', svg); ct.setAttribute('x', xT); ct.textContent = `T=帧${T}`;
+    const kt = $('#m1-key-t', svg); kt.setAttribute('x', xK);
+    kt.textContent = `I${key}`; kt.style.display = (xT - xK < 34) ? 'none' : '';
+    $('#m1-arc', svg).setAttribute('d', `M ${xT} 14 Q ${(xT + xK) / 2} ${xT - xK > 200 ? -14 : 0} ${xK + 3} 14`);
+
+    el.target.textContent = `帧 ${T} · ${(T / FPS).toFixed(2)}s`;
+    el.key.textContent = `帧 ${key}（回退 ${T - key} 帧）`;
+    el.total.textContent = `${total} 帧`;
+    el.decode.textContent = `${decode} 帧`;
+    el.time.textContent = `≈ ${decode * TDEC} ms`;
+    el.rav.textContent = `${total * TDEC} ms`;
+    el.rbv.textContent = `${decode * TDEC} ms`;
+    el.ra.style.width = '100%';
+    el.rb.style.width = (decode / total * 100).toFixed(1) + '%';
+    if (nonkey)
+      el.note.textContent = `NONKEY：只解码关键帧，实际停在帧 ${key}（非精确 seek，参考链对后续播放已断，适合连续拖动预览）。`;
+    else if (drop) {
+      const tf = frameOf(T);
+      el.note.textContent = `NONREF：只解码追帧区间内的参考帧${tf.ref ? '' : '；目标帧虽是非参考帧，但要显示它就必须解码它'}。参考链完好，零画质代价。`;
+    } else el.note.textContent = '未启用丢帧：追帧区间内每一帧都要解码。';
+  }
+  function pick(ev) {
+    const rect = svg.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) / rect.width * W;
+    st.target = Math.max(1, Math.min(N - 1, Math.round((x - x0) / bw)));
+    render();
+  }
+  let dragging = false;
+  svg.addEventListener('pointerdown', e => { dragging = true; svg.setPointerCapture(e.pointerId); pick(e); });
+  svg.addEventListener('pointermove', e => dragging && pick(e));
+  svg.addEventListener('pointerup', () => dragging = false);
+  el.drop.addEventListener('change', render);
+  el.nonkey.addEventListener('change', render);
+  render();
+})();
+
+/* ================================================================
+   M3 · NAL 头字节检查器
+   ================================================================ */
+(() => {
+  const H264_NAMES = { 1:'非 IDR slice', 5:'IDR slice', 6:'SEI', 7:'SPS', 8:'PPS', 9:'AUD', 12:'Filler' };
+  const H265_NAMES = {
+    0:'TRAIL_N',1:'TRAIL_R',2:'TSA_N',3:'TSA_R',4:'STSA_N',5:'STSA_R',6:'RADL_N',7:'RADL_R',
+    8:'RASL_N',9:'RASL_R',10:'VCL_N10',11:'VCL_R11',12:'VCL_N12',13:'VCL_R13',14:'VCL_N14',15:'VCL_R15',
+    16:'BLA_W_LP',17:'BLA_W_RADL',18:'BLA_N_LP',19:'IDR_W_RADL',20:'IDR_N_LP',21:'CRA_NUT',
+    32:'VPS',33:'SPS',34:'PPS',35:'AUD',39:'PREFIX_SEI',40:'SUFFIX_SEI',
+  };
+  const PRESETS = {
+    h264: [
+      { label: '非参考 B slice（可丢）', bytes: [0x01] },
+      { label: '参考 slice（不可丢）', bytes: [0x41] },
+      { label: 'IDR 关键帧', bytes: [0x65] },
+      { label: 'SPS', bytes: [0x67] },
+      { label: 'SEI', bytes: [0x06] },
+    ],
+    h265: [
+      { label: 'TRAIL_N（可丢）', bytes: [0x00, 0x01] },
+      { label: 'TRAIL_R（不可丢）', bytes: [0x02, 0x01] },
+      { label: 'RASL_N（seek 到 CRA 后必丢）', bytes: [0x10, 0x01] },
+      { label: 'IDR_W_RADL 关键帧', bytes: [0x26, 0x01] },
+      { label: 'CRA（open-GOP 关键帧）', bytes: [0x2A, 0x01] },
+      { label: 'TSA_N · TemporalId=1', bytes: [0x04, 0x02] },
+    ],
+  };
+  /* 位域定义：[起始bit, 长度, css类, 标签] */
+  const FIELDS = {
+    h264: [[0,1,'f-forb','F'],[1,2,'f-ref','ref_idc'],[3,5,'f-type','type']],
+    h265: [[0,1,'f-forb','F'],[1,6,'f-type','type'],[7,6,'f-lay','layer'],[13,3,'f-tid','tid+1']],
+  };
+  let codec = 'h264', bytes = [0x01];
+  const bitsEl = $('#m3-bits'), fieldsEl = $('#m3-fields'), verdictEl = $('#m3-verdict'),
+        presetEl = $('#m3-preset'), hexEl = $('#m3-hex'),
+        tabs = { h264: $('#m3-tab-h264'), h265: $('#m3-tab-h265') };
+
+  const getBit = i => (bytes[i >> 3] >> (7 - (i & 7))) & 1;
+  const setBit = (i, v) => { const m = 1 << (7 - (i & 7)); bytes[i >> 3] = v ? bytes[i >> 3] | m : bytes[i >> 3] & ~m; };
+  const getField = (start, len) => { let v = 0; for (let i = 0; i < len; i++) v = v << 1 | getBit(start + i); return v; };
+  const fieldOfBit = i => FIELDS[codec].find(f => i >= f[0] && i < f[0] + f[1]);
+
+  function badge(cls, text) { return `<span class="badge ${cls}">${text}</span>`; }
+  function big(color, text) {
+    return `<span class="big" style="color:${color};border-color:${color}66;background:${color}14">${text}</span>`;
+  }
+  function render() {
+    /* bits */
+    bitsEl.innerHTML = '';
+    const nbits = bytes.length * 8;
+    let group;
+    const type = codec === 'h264' ? getField(3, 5) : getField(1, 6);
+    for (let i = 0; i < nbits; i++) {
+      if (i % 8 === 0) { group = document.createElement('div'); group.className = 'byte-group'; bitsEl.appendChild(group); }
+      const f = fieldOfBit(i);
+      const cell = document.createElement('div');
+      cell.className = 'bitcell ' + (f ? f[2] : '');
+      if (codec === 'h265' && i === 6 && type <= 15) cell.classList.add('parity'); /* type 最低位 = _N/_R */
+      cell.innerHTML = `<div class="b">${getBit(i)}</div><div class="f">${f && i === f[0] ? f[3] : '·'}</div>`;
+      cell.addEventListener('click', () => { setBit(i, 1 - getBit(i)); presetEl.value = 'custom'; render(); });
+      group.appendChild(cell);
+    }
+    hexEl.value = bytes.map(b => b.toString(16).padStart(2, '0')).join(' ');
+
+    /* fields + verdict */
+    const fld = (k, v) => `<span class="fld">${k} = <b>${v}</b></span>`;
+    let verdict = [];
+    if (getBit(0)) verdict.push(big(CL.bad, '⛔ forbidden_zero_bit ≠ 0，非法码流'));
+    if (codec === 'h264') {
+      const ref = getField(1, 2);
+      fieldsEl.innerHTML = fld('forbidden', getBit(0)) + fld('nal_ref_idc', ref) +
+        fld('nal_unit_type', `${type}（${H264_NAMES[type] || '其他'}）`);
+      if (type === 5) {
+        verdict.push(big(CL.key, '🔑 IDR 关键帧 · 必为参考'));
+        if (ref === 0) verdict.push(badge('bad', '违规：IDR 的 nal_ref_idc 不得为 0'));
+      } else if (type >= 1 && type <= 4) {
+        verdict.push(ref === 0
+          ? big(CL.ref, '✅ 非参考帧 · 可安全丢弃')
+          : big(CL.nonref, '🔒 参考帧（ref_idc=' + ref + '）· 丢弃会花屏'));
+      } else if (type) {
+        verdict.push(big('#5d6b80', `非 VCL：${H264_NAMES[type] || 'type ' + type}，不承载图像`));
+        if ((type === 7 || type === 8) && ref === 0) verdict.push(badge('bad', '违规：SPS/PPS 的 ref_idc 不得为 0'));
+      }
+    } else {
+      const layer = getField(7, 6), tid = getField(13, 3) - 1;
+      fieldsEl.innerHTML = fld('nal_unit_type', `${type}（${H265_NAMES[type] || '保留'}）`) +
+        fld('nuh_layer_id', layer) + fld('TemporalId', tid < 0 ? 'tid+1=0 非法' : tid);
+      if (tid < 0) verdict.push(badge('bad', 'nuh_temporal_id_plus1 不得为 0'));
+      if (type <= 15) {
+        if ((type & 1) === 0) {
+          verdict.push(big(CL.ref, `✅ ${H265_NAMES[type]} · _N 非参考（type 为偶数）· 可安全丢弃`));
+          if (tid > 0) verdict.push(badge('warn', `TemporalId=${tid}：多时域层流仅最高层 _N 绝对安全`));
+        } else {
+          verdict.push(big(CL.nonref, `🔒 ${H265_NAMES[type]} · _R 参考帧 · 丢弃会花屏`));
+        }
+        if (type === 8 || type === 9) verdict.push(badge('warn', '⚠️ RASL：seek 落在 CRA 上时必须丢弃（正确性）'));
+      } else if (type >= 16 && type <= 23) {
+        verdict.push(big(CL.key, `🔑 IRAP 关键帧：${H265_NAMES[type] || 'type ' + type}`));
+        if (type === 21) verdict.push(badge('warn', 'open-GOP：其后的 RASL 帧 seek 后必须丢弃'));
+        else if (type <= 18) verdict.push(badge('warn', 'BLA：拼接断点，后随 RASL 不可解'));
+      } else if (H265_NAMES[type]) {
+        verdict.push(big('#5d6b80', `非 VCL：${H265_NAMES[type]}，不承载图像`));
+      } else {
+        verdict.push(big('#5d6b80', `type ${type}：保留/非 VCL`));
+      }
+      $$('#m3-pairs tr[data-n]').forEach(tr => {
+        const n = +tr.dataset.n;
+        const hit = type <= 15 && (type === n || type === n + 1 || (n === 10 && type >= 10));
+        $$('td', tr).forEach(td => td.classList.toggle('hl', hit));
+      });
+    }
+    verdictEl.innerHTML = verdict.join(' ');
+    $('#m3-h265-extra').style.display = codec === 'h265' ? 'block' : 'none';
+  }
+  function loadPresets() {
+    presetEl.innerHTML = PRESETS[codec].map((p, i) => `<option value="${i}">${p.label}</option>`).join('') +
+      `<option value="custom">自定义</option>`;
+  }
+  function switchCodec(c) {
+    codec = c;
+    tabs.h264.classList.toggle('on', c === 'h264');
+    tabs.h265.classList.toggle('on', c === 'h265');
+    loadPresets();
+    bytes = PRESETS[c][0].bytes.slice();
+    presetEl.value = '0';
+    render();
+  }
+  tabs.h264.addEventListener('click', () => switchCodec('h264'));
+  tabs.h265.addEventListener('click', () => switchCodec('h265'));
+  presetEl.addEventListener('change', () => {
+    if (presetEl.value === 'custom') return;
+    bytes = PRESETS[codec][+presetEl.value].bytes.slice(); render();
+  });
+  hexEl.addEventListener('change', () => {
+    const hex = hexEl.value.replace(/0x|[^0-9a-fA-F]/g, '');
+    const need = codec === 'h264' ? 2 : 4;
+    if (hex.length !== need) { render(); return; }
+    bytes = (hex.match(/../g) || []).map(h => parseInt(h, 16));
+    presetEl.value = 'custom'; render();
+  });
+  switchCodec('h264');
+})();
+
+/* ================================================================
+   M5 · hwaccel vs wrapper：NAL 流动画
+   ================================================================ */
+(() => {
+  const mod = $('#m5');
+  const cols = [
+    { el: $('#m5-left'),  hwaccel: true,  verdict: $('#m5-verdict-l'), note: $('#m5-note-l') },
+    { el: $('#m5-right'), hwaccel: false, verdict: $('#m5-verdict-r'), note: $('#m5-note-r') },
+  ];
+  const toggle = $('#m5-toggle');
+  const seq = [true, false, true, false, false, true]; /* ref / nonref 花纹 */
+  let seqI = 0, spawnT = 0;
+  const dots = [];
+  function verdicts() {
+    const on = toggle.checked;
+    for (const c of cols) {
+      if (!on) { c.verdict.textContent = '所有 NAL 全部送入解码'; c.verdict.style.color = '#5d6b80'; c.note.textContent = ''; }
+      else if (c.hwaccel) {
+        c.verdict.textContent = '✅ skip_frame 生效';
+        c.verdict.style.color = CL.ref;
+        c.note.textContent = '非参考 NAL 在软件层被拦下，硬件只收参考帧';
+      } else {
+        c.verdict.textContent = '❌ skip_frame 无效';
+        c.verdict.style.color = CL.bad;
+        c.note.textContent = 'NAL 原样进黑盒 → 只能在喂入前自己丢包';
+      }
+    }
+  }
+  toggle.addEventListener('change', verdicts); verdicts();
+
+  visLoop(mod, (dt) => {
+    spawnT -= dt;
+    if (spawnT <= 0) {
+      spawnT = 0.55;
+      const isRef = seq[seqI++ % seq.length];
+      for (const c of cols) {
+        const d = document.createElement('div');
+        d.className = 'm5-dot';
+        d.style.background = isRef ? CL.ref : CL.nonref;
+        d.style.boxShadow = `0 0 8px ${isRef ? CL.ref : CL.nonref}55`;
+        c.el.appendChild(d);
+        const box = $$('.m5-box', c.el)[1]; /* 软件层 / wrapper 层 */
+        dots.push({
+          el: d, col: c, isRef, y: 46, x: 0, vx: 0, alpha: 1,
+          gateY: box.offsetTop + box.offsetHeight / 2, deflected: false,
+        });
+      }
+    }
+    const H = cols[0].el.clientHeight;
+    for (let i = dots.length - 1; i >= 0; i--) {
+      const d = dots[i];
+      d.y += dt * 92;
+      if (toggle.checked && d.col.hwaccel && !d.isRef && !d.deflected && d.y >= d.gateY) {
+        d.deflected = true; d.vx = 130; /* 软件层拦截：弹飞 */
+      }
+      if (d.deflected) { d.x += d.vx * dt; d.y -= dt * 40; d.alpha -= dt * 1.8; }
+      if (d.y > H - 26 || d.alpha <= 0) { d.el.remove(); dots.splice(i, 1); continue; }
+      const cw = d.col.el.clientWidth;
+      d.el.style.transform = `translate(${cw / 2 - 7 + d.x}px, ${d.y}px) rotate(${d.deflected ? d.x : 0}deg)`;
+      d.el.style.opacity = d.alpha;
+    }
+  });
+
+  /* Android / iOS 选项卡 */
+  const t = { android: [$('#m5-tab-android'), $('#m5-pane-android')], ios: [$('#m5-tab-ios'), $('#m5-pane-ios')] };
+  for (const k in t) t[k][0].addEventListener('click', () => {
+    for (const j in t) { t[j][0].classList.toggle('on', j === k); t[j][1].classList.toggle('on', j === k); }
+  });
+})();
+
+/* ================================================================
+   M6 · 精确 Seek 步进器
+   ================================================================ */
+(() => {
+  const CODE = [
+    'av_seek_frame(fmt, v, target, AVSEEK_FLAG_BACKWARD);',
+    'avcodec_flush_buffers(avctx);',
+    'avctx->skip_frame = AVDISCARD_NONREF;      // ①/②',
+    'while (read_packet(&pkt)) {',
+    '    if (preroll && packet_droppable(pkt))  // ① 丢包',
+    '        continue;',
+    '    decode(pkt, preroll ? DECODE_ONLY : 0);// ③',
+    '    while (receive_frame(&f)) {',
+    '        if (f.pts + f.dur <= target) {',
+    '            discard(f);                    // ④ 不渲染',
+    '            continue;',
+    '        }',
+    '        avctx->skip_frame = AVDISCARD_DEFAULT;',
+    '        render(f);                         // 首帧上屏 ✓',
+    '    }',
+    '}',
+  ];
+  const codeEl = $('#m6-code');
+  codeEl.innerHTML = CODE.map((l, i) => `<span class="ln" data-l="${i}">${l.replace(/</g, '&lt;')}</span>`).join('');
+  const strip = $('#m6-strip');
+  strip.innerHTML = GOP.map(f =>
+    `<div class="m6-fr" id="m6f-${f.id}"><span style="color:${colorOfL(f)}">${f.id}</span><span class="st">待读</span></div>`).join('');
+
+  /* mark: [帧id, 类名, 状态字] */
+  const STEPS = [
+    { n: 'seek', l: 0, d: '<b>① 定位</b>：av_seek_frame(BACKWARD) 按容器关键帧索引（stss/sidx）回退到 ≤ 目标 B3 的关键帧 <b>I0</b>。' },
+    { n: 'flush', l: 1, d: '<b>② flush</b>：清空解码器内部状态与 DPB，准备从 I0 重新建立参考链。' },
+    { n: 'read', l: 2, d: '<b>③ 追帧开始</b>：设 skip_frame=NONREF（软解/hwaccel 路径下②生效；MediaCodec 则靠下面的①）。以下按<b>解码顺序</b>读包：I0 → P4 → B2 → B1 → B3。' },
+    { n: 'feed', l: 6, d: '<b>I0</b>（IDR，参考）：喂入解码，preroll 内可带 DECODE_ONLY——解码入 DPB 但不出帧。', mark: [['I0', 'decoded', '解码✓']] },
+    { n: 'feed', l: 6, d: '<b>P4</b>（参考 P，第 0 层锚点）：显示顺序在目标 B3 <b>之后</b>，但 B2/B3 都依赖它——解码顺序在前，必须先解。', mark: [['P4', 'decoded', '解码✓']] },
+    { n: 'feed', l: 6, d: '<b>B2</b>（<b>参考 B</b>，金字塔第 1 层·中间参考层）：不能丢！B1/B3 引用它。「丢 B 帧」策略在这里翻车。', mark: [['B2', 'decoded', '解码✓']] },
+    { n: 'drop', l: 4, d: '<b>B1</b>（非参考，pts&lt;target）：<b>① 整包丢弃</b>，解码器根本不知道它存在过。H.264 看 ref_idc==0，H.265 看 _N。', mark: [['B1', 'dropped', '丢包①']] },
+    { n: 'drop', l: 4, warn: true, d: '<b>⚠️ HEVC 分支</b>：若关键帧是 CRA（open-GOP），其后的 RASL 帧引用了 seek 前的帧，<b>必须</b>在①丢弃——这是正确性要求，不是优化。' },
+    { n: 'feed', l: 6, d: '<b>B3 = 目标帧</b>：它虽是非参考帧，但要显示它就必须解码它——不带 DECODE_ONLY，正常解码输出。', mark: [['B3', 'decoded', '解码✓']] },
+    { n: 'norender', l: 9, d: '<b>输出侧</b>：I0/B2 输出帧 pts+dur ≤ target → <b>④ 不渲染丢弃</b>（硬解用 releaseOutputBuffer(false) / 不回调，省纹理上传）；P4 的 pts 在目标之后，它的输出留给后续正常播放。', mark: [['I0', 'norender', '不渲染④'], ['B2', 'norender', '不渲染④']] },
+    { n: 'done', l: 13, d: '<b>B3 输出</b>：pts 覆盖 target → 恢复 skip_frame=DEFAULT，<b>首帧上屏，Seek 完成</b> 🎉。本次解码 4 帧、①丢弃 1 帧；P4 已在 DPB，接下来的播放无缝继续。', mark: [['B3', 'shown', '上屏🎉']] },
+  ];
+  let cur = -1, playing = null;
+  const desc = $('#m6-desc');
+  function apply(i) {
+    cur = Math.max(-1, Math.min(STEPS.length - 1, i));
+    $$('.m6-fr').forEach(f => { f.className = 'm6-fr'; $('.st', f).textContent = '待读'; });
+    $$('.m6-node').forEach(n => n.className = 'm6-node');
+    $$('#m6-code .ln').forEach(l => l.classList.remove('on'));
+    for (let k = 0; k <= cur; k++)
+      (STEPS[k].mark || []).forEach(([id, cls, st]) => {
+        const f = $('#m6f-' + id); f.classList.remove('cur');
+        f.classList.add(cls); $('.st', f).textContent = st;
+      });
+    if (cur >= 0) {
+      const s = STEPS[cur];
+      const node = $(`.m6-node[data-n="${s.n}"]`);
+      node.classList.add(s.warn ? 'warn-on' : 'on');
+      $(`#m6-code .ln[data-l="${s.l}"]`).classList.add('on');
+      (s.mark || []).forEach(([id]) => $('#m6f-' + id).classList.add('cur'));
+      desc.innerHTML = `<span style="color:var(--muted);font-family:var(--mono);font-size:11px">STEP ${cur + 1}/${STEPS.length}</span><br>` + s.d;
+    } else desc.textContent = '点「下一步」开始步进。';
+  }
+  $('#m6-next').addEventListener('click', () => { stop(); apply(cur + 1); });
+  $('#m6-prev').addEventListener('click', () => { stop(); apply(cur - 1); });
+  const playBtn = $('#m6-play');
+  function stop() { if (playing) { clearInterval(playing); playing = null; playBtn.textContent = '▶ 自动播放'; } }
+  playBtn.addEventListener('click', () => {
+    if (playing) { stop(); return; }
+    playBtn.textContent = '⏸ 暂停';
+    if (cur >= STEPS.length - 1) apply(-1);
+    playing = setInterval(() => {
+      if (cur >= STEPS.length - 1) stop(); else apply(cur + 1);
+    }, 2000);
+  });
+  apply(-1);
+})();
+</script>
+<!-- APP-SCRIPT -->
+
+<script type="module">
+(async () => {
+  /* ---------- 加载与降级 ---------- */
+  let THREE, OrbitControls;
+  function degrade(msg) {
+    ['#m2-wrap', '#m4-wrap'].forEach(s => $(s).classList.add('fallback'));
+    const hb = $('#hero-bg'); if (hb) hb.style.display = 'none';
+    console.warn('[3D degrade]', msg);
+  }
+  try {
+    THREE = await import('three');
+    ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+  } catch (e) { degrade(e); return; }
+
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const scenes = [];
+  function makeRenderer(container) {
+    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    r.setPixelRatio(Math.min(devicePixelRatio, 2));
+    r.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(r.domElement);
+    return r;
+  }
+  /* 尺寸自愈：容器尺寸变化（或初始化时为 0）都会在下一帧修正 */
+  function fitRenderer(s) {
+    const w = s.container.clientWidth, h = s.container.clientHeight;
+    if (!w || !h) return false;
+    const cv = s.renderer.domElement;
+    if (Math.abs(cv.clientWidth - w) > 1 || Math.abs(cv.clientHeight - h) > 1) {
+      s.camera.aspect = w / h; s.camera.updateProjectionMatrix(); s.renderer.setSize(w, h);
+    }
+    return true;
+  }
+  addEventListener('resize', () => scenes.forEach(fitRenderer));
+
+  function makeTextTexture(lines, opts = {}) {
+    const cv = document.createElement('canvas');
+    const W = opts.w || 256, H = opts.h || 128;
+    cv.width = W * 2; cv.height = H * 2;
+    const g = cv.getContext('2d'); g.scale(2, 2);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    lines.forEach(l => {
+      g.font = `${l.bold ? '700' : '500'} ${l.size}px ${l.mono ? 'ui-monospace, Menlo, monospace' : 'sans-serif'}`;
+      g.fillStyle = l.color || '#fff';
+      g.fillText(l.text, W / 2, l.y);
+    });
+    const tx = new THREE.CanvasTexture(cv);
+    tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = 4;
+    return tx;
+  }
+  function makeLabelSprite(lines, w = 2.4, h = 1.2, o = {}) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: makeTextTexture(lines, o), transparent: true, depthWrite: false,
+    }));
+    sp.scale.set(w, h, 1);
+    return sp;
+  }
+  function showToast(el, cls, text) {
+    el.className = 'toast ' + cls + ' show'; el.textContent = text;
+    clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+
+  /* ================================================================
+     GOP 场景（M2 依赖图 + Hero 背景共用一套构建代码）
+     ================================================================ */
+  function buildGopScene(container, { hero = false } = {}) {
+    let renderer;
+    try { renderer = makeRenderer(container); } catch (e) { degrade(e); return null; }
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(0, 4.2, 13.5);
+    scene.add(new THREE.AmbientLight(0x8899bb, 1.1));
+    const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(5, 10, 7); scene.add(dl);
+    const grid = new THREE.GridHelper(46, 46, 0x24304a, 0x161d2e);
+    grid.position.y = 0; scene.add(grid);
+
+    let controls = null;
+    if (!hero) {
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true; controls.dampingFactor = 0.08;
+      controls.enablePan = false; controls.minDistance = 7; controls.maxDistance = 22;
+      controls.maxPolarAngle = 1.5; controls.target.set(0, 1.4, 0);
+    }
+
+    const SP = 1.6; /* 卡片间距 */
+    const world = new THREE.Group(); scene.add(world);
+    const cards = new Map();      /* id -> {group, mesh, mat, f, state, vy, vr, targetX} */
+    const edgeGroup = new THREE.Group(); world.add(edgeGroup);
+    let edges = [];               /* {from,to,tube,cone,mat} */
+    let orderMode = 'disp';       /* disp | dec | pyr */
+    let animatingOrder = false;
+
+    /* 金字塔分层：第0层锚点 / 第1层参考B / 第2层叶子（层号为讲解用编号，非 TemporalId） */
+    const LAYER = { I0: 0, P4: 0, B2: 1, B1: 2, B3: 2 };
+    const PYR_X = { I0: -2, P4: 2, B2: 0, B1: -1, B3: 1 };
+    const LAYER_H = 1.75;
+    const CENTER = (GOP.length - 1) / 2;
+    function posOf(f) {
+      if (orderMode === 'pyr') return { x: PYR_X[f.id] * 1.6, y: 1.05 + LAYER[f.id] * LAYER_H };
+      return { x: ((orderMode === 'disp' ? GOP.indexOf(f) : f.dec) - CENTER) * SP, y: 1.05 };
+    }
+    function subOf(f) { return f.key ? 'IDR·参考' : f.ref ? (f.t === 'B' ? 'B·参考(pyramid)' : 'P·参考') : 'B·非参考'; }
+
+    function buildCards() {
+      for (const f of GOP) {
+        const col = new THREE.Color(colorOf(f));
+        const mat = new THREE.MeshStandardMaterial({
+          color: col, roughness: 0.4, metalness: 0.2, transparent: true,
+          emissive: col, emissiveIntensity: 0.22,
+        });
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.14, 1.6, 0.14), mat);
+        const group = new THREE.Group();
+        group.add(mesh);
+        const lbl = makeLabelSprite([
+          { text: f.id, y: 46, size: 44, bold: true, mono: true, color: '#ffffff' },
+          { text: subOf(f), y: 88, size: 17, color: '#c9d2e4' },
+        ], 1.9, 0.95, { w: 256, h: 128 });
+        lbl.position.set(0, -0.1, 0.45); group.add(lbl);
+        const p0 = posOf(f);
+        group.position.set(p0.x, p0.y, 0);
+        world.add(group);
+        mesh.userData.id = f.id;
+        cards.set(f.id, { group, mesh, mat, lbl, f, state: 'ok', vy: 0, vr: 0, targetX: p0.x, targetY: p0.y, pulse: Math.random() * 6 });
+      }
+    }
+    /* 金字塔模式下的层级标注牌 */
+    const layerLabels = [
+      ['第2层 · 上层叶子（非参考）', 2], ['第1层 · 中间参考层', 1], ['第0层 · 底部锚点', 0],
+    ].map(([txt, ly]) => {
+      const sp = makeLabelSprite([{ text: txt, y: 64, size: 24, color: '#9fb0c8' }], 3.2, 0.8, { w: 384, h: 96 });
+      sp.position.set(-5.4, 1.15 + ly * LAYER_H, 0);
+      sp.visible = false; world.add(sp);
+      return sp;
+    });
+    function buildEdges() {
+      edgeGroup.clear(); edges = [];
+      for (const f of GOP) {
+        const cf = cards.get(f.id);
+        if (cf.state === 'dropped') continue;
+        for (const d of f.deps) {
+          const cd = cards.get(d);
+          if (cd.state === 'dropped') continue;
+          const x1 = cf.group.position.x, x2 = cd.group.position.x;
+          const y1 = cf.group.position.y + 0.9, y2 = cd.group.position.y + 0.9;
+          const lift = 0.4 + Math.abs(x1 - x2) * 0.28;
+          const curve = new THREE.QuadraticBezierCurve3(
+            new THREE.Vector3(x1, y1, 0),
+            new THREE.Vector3((x1 + x2) / 2, Math.max(y1, y2) + lift, 0),
+            new THREE.Vector3(x2, y2 + 0.06, 0));
+          const mat = new THREE.MeshBasicMaterial({ color: 0x44536f, transparent: true, opacity: 0.9 });
+          const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.032, 6), mat);
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.24, 10), mat);
+          const tEnd = 0.96;
+          cone.position.copy(curve.getPoint(tEnd));
+          cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), curve.getTangent(tEnd).normalize());
+          edgeGroup.add(tube, cone);
+          edges.push({ from: f.id, to: d, tube, cone, mat });
+        }
+      }
+    }
+    buildCards(); buildEdges();
+
+    /* ---------- 状态渲染 ---------- */
+    const NEUTRAL = 0x44536f;
+    function paint(hoverId, tableIds) {
+      const focus = hoverId || (tableIds && tableIds.length ? '__set__' : null);
+      for (const [id, c] of cards) {
+        if (c.state === 'dropped') continue;
+        const inSet = tableIds && tableIds.includes(id);
+        const connected = hoverId && (id === hoverId ||
+          GOP_BY_ID[hoverId].deps.includes(id) || GOP_BY_ID[id].deps.includes(hoverId));
+        let op = 1, emi = c.state === 'corrupt' ? 0.55 : 0.22, scale = 1;
+        if (focus) {
+          const lit = hoverId ? connected : inSet;
+          op = lit ? 1 : 0.18;
+          if (lit) { emi = Math.max(emi, 0.5); scale = id === hoverId || inSet ? 1.08 : 1; }
+        }
+        c.mat.opacity = op; c.lbl.material.opacity = Math.max(0.25, op);
+        c.mat.emissiveIntensity = emi;
+        c.group.scale.setScalar(scale);
+      }
+      for (const e of edges) {
+        const cf = cards.get(e.from), cd = cards.get(e.to);
+        if (cf.state === 'dropped' || cd.state === 'dropped') { e.tube.visible = e.cone.visible = false; continue; }
+        e.tube.visible = e.cone.visible = true;
+        if (cf.state === 'corrupt') { e.mat.color.set(C.bad); e.mat.opacity = 0.95; }
+        else if (hoverId && e.from === hoverId) { e.mat.color.set(C.accent); e.mat.opacity = 1; }
+        else if (hoverId && e.to === hoverId) { e.mat.color.set(C.nonref); e.mat.opacity = 1; }
+        else { e.mat.color.set(NEUTRAL); e.mat.opacity = focus ? 0.12 : 0.9; }
+      }
+    }
+    paint(null, null);
+
+    /* ---------- 交互（Hero 模式跳过） ---------- */
+    let hoverId = null, tableIds = null;
+    const api = { renderer, camera, container, scene };
+    if (!hero) {
+      const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+      const toast = $('#m2-toast');
+      const info = document.createElement('div');
+      info.style.cssText = 'position:absolute;top:12px;right:14px;font:11.5px ui-monospace,Menlo,monospace;color:#c9d2e4;background:#0b0e14aa;border:1px solid #29334a;border-radius:8px;padding:5px 10px;pointer-events:none;display:none;z-index:4';
+      container.appendChild(info);
+
+      function pickCard(ev) {
+        const r = renderer.domElement.getBoundingClientRect();
+        ptr.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+        ptr.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
+        ray.setFromCamera(ptr, camera);
+        const hits = ray.intersectObjects([...cards.values()].filter(c => c.state !== 'dropped').map(c => c.mesh));
+        return hits.length ? hits[0].object.userData.id : null;
+      }
+      renderer.domElement.addEventListener('pointermove', ev => {
+        const id = pickCard(ev);
+        if (id !== hoverId) {
+          hoverId = id; paint(hoverId, tableIds);
+          if (id) {
+            const f = GOP_BY_ID[id];
+            const by = GOP.filter(x => x.deps.includes(id)).map(x => x.id);
+            info.textContent = `${id} · ${subOf(f)} · 引用[${f.deps.join(',') || '无'}] · 被引用[${by.join(',') || '无'}]`;
+            info.style.display = 'block';
+          } else info.style.display = 'none';
+          renderer.domElement.style.cursor = id ? 'pointer' : 'grab';
+        }
+      });
+      function dropFrame(id) {
+        if (animatingOrder) return;
+        const c = cards.get(id);
+        if (!c || c.state === 'dropped') return;
+        c.state = 'dropped'; c.vy = 2.2; c.vr = (Math.random() - 0.5) * 5;
+        hoverId = null; info.style.display = 'none';
+        if (!c.f.ref) {
+          showToast(toast, 'good', `丢弃 ${id}：非参考帧，没人依赖它，参考链完好 ✅`);
+        } else {
+          const deps = [...transitiveDependents(id)].filter(x => cards.get(x).state === 'ok');
+          /* 沿参考链逐级变红 */
+          let depth = 0, frontier = [id];
+          const seen = new Set([id]);
+          while (frontier.length) {
+            depth++;
+            const next = [];
+            for (const cur of frontier)
+              for (const f of GOP)
+                if (f.deps.includes(cur) && !seen.has(f.id)) { seen.add(f.id); next.push(f.id); }
+            next.forEach(x => setTimeout(() => {
+              const cx = cards.get(x);
+              if (cx.state === 'ok') {
+                cx.state = 'corrupt';
+                cx.mat.color.set(C.bad); cx.mat.emissive.set(C.bad);
+                paint(hoverId, tableIds);
+              }
+            }, depth * 320));
+            frontier = next;
+          }
+          showToast(toast, 'bad', `丢弃 ${id}：${deps.join('、')} 沿参考链花屏 ❌`);
+        }
+        paint(hoverId, tableIds);
+      }
+      renderer.domElement.addEventListener('click', ev => {
+        const id = pickCard(ev);
+        if (id) dropFrame(id);
+      });
+      window.__m2 = {
+        drop: dropFrame,
+        state: () => Object.fromEntries([...cards].map(([k, c]) => [k, c.state])),
+        pos: () => Object.fromEntries([...cards].map(([k, c]) => [k, [+c.group.position.x.toFixed(2), +c.group.position.y.toFixed(2)]])),
+        snap: () => {
+          for (const [, c] of cards) if (c.state !== 'dropped') c.group.position.set(c.targetX, c.targetY, 0);
+          animatingOrder = false; buildEdges(); edgeGroup.visible = true; paint(hoverId, tableIds);
+        },
+      };
+
+      $('#m2-reset').addEventListener('click', () => {
+        for (const [, c] of cards) {
+          c.state = 'ok'; c.vy = 0; c.vr = 0;
+          c.group.visible = true;
+          const p = posOf(c.f);
+          c.group.position.set(c.targetX = p.x, c.targetY = p.y, 0);
+          c.group.rotation.set(0, 0, 0);
+          const col = new THREE.Color(colorOf(c.f));
+          c.mat.color.copy(col); c.mat.emissive.copy(col);
+        }
+        buildEdges(); paint(hoverId = null, tableIds);
+      });
+      $$('#m2-arrange button').forEach(b => b.addEventListener('click', () => {
+        if (b.dataset.mode === orderMode) return;
+        $$('#m2-arrange button').forEach(x => x.classList.toggle('on', x === b));
+        orderMode = b.dataset.mode;
+        animatingOrder = true; edgeGroup.visible = false;
+        layerLabels.forEach(sp => sp.visible = orderMode === 'pyr');
+        controls.target.y = orderMode === 'pyr' ? 2.7 : 1.4; /* 分层视图抬高视角中心 */
+        for (const [, c] of cards) { const p = posOf(c.f); c.targetX = p.x; c.targetY = p.y; }
+      }));
+      /* 四象限表联动入口 */
+      window.__m2Highlight = ids => { tableIds = ids; paint(hoverId, tableIds); };
+    }
+
+    /* ---------- 渲染循环 ---------- */
+    let heroAngle = 0;
+    visLoop(container, (dt, t) => {
+      fitRenderer(api);
+      if (hero) {
+        heroAngle += dt * (reduced ? 0 : 0.12);
+        camera.position.set(Math.sin(heroAngle) * 15, 5.5, Math.cos(heroAngle) * 15);
+        camera.lookAt(0, 1.2, 0);
+      } else controls.update();
+      let stillMoving = false;
+      for (const [, c] of cards) {
+        if (c.state === 'dropped' && c.group.visible) {
+          c.vy += dt * 9; c.group.position.y -= c.vy * dt;
+          c.group.rotation.z += c.vr * dt; c.group.rotation.x += c.vr * 0.6 * dt;
+          if (c.group.position.y < -4) c.group.visible = false;
+        }
+        if (c.state === 'corrupt' && !reduced) {
+          c.mat.emissiveIntensity = 0.45 + 0.3 * Math.sin(t * 7 + c.pulse);
+          c.group.position.x = c.targetX + Math.sin(t * 31 + c.pulse) * 0.02;
+        }
+        if (animatingOrder && c.state !== 'dropped') {
+          const dx = c.targetX - c.group.position.x, dy = c.targetY - c.group.position.y;
+          if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+            const k = Math.min(1, dt * 6);
+            c.group.position.x += dx * k; c.group.position.y += dy * k;
+            stillMoving = true;
+          } else { c.group.position.x = c.targetX; c.group.position.y = c.targetY; }
+        }
+      }
+      if (animatingOrder && !stillMoving) {
+        animatingOrder = false; buildEdges(); edgeGroup.visible = true; paint(hoverId, tableIds);
+      }
+      renderer.render(scene, camera);
+    });
+    scenes.push(api);
+    return api;
+  }
+
+  /* ================================================================
+     M4 · 四作用点流水线
+     ================================================================ */
+  function buildPipeline(container) {
+    let renderer;
+    try { renderer = makeRenderer(container); } catch (e) { degrade(e); return; }
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(0.5, 5.2, 10.5);
+    scene.add(new THREE.AmbientLight(0x8899bb, 1.1));
+    const dl = new THREE.DirectionalLight(0xffffff, 1.5); dl.position.set(-4, 9, 6); scene.add(dl);
+    const grid = new THREE.GridHelper(40, 40, 0x24304a, 0x161d2e); grid.position.y = -0.02; scene.add(grid);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.enablePan = false;
+    controls.minDistance = 6; controls.maxDistance = 18; controls.maxPolarAngle = 1.45;
+    controls.target.set(0, 0.8, 0);
+
+    /* 传送带 */
+    const belt = new THREE.Mesh(
+      new THREE.BoxGeometry(15.6, 0.14, 1.5),
+      new THREE.MeshStandardMaterial({ color: 0x1b2233, roughness: 0.85 }));
+    belt.position.set(0, 0.35, 0); scene.add(belt);
+
+    /* 站点：闸门拱门 / 解码器 / 上屏 */
+    const G1X = -4.1, DEC_IN = -2.4, DEC_OUT = -0.9, G3X = 0.6, G4X = 2.9, SCR_X = 6.2;
+    function arch(x, colorHex, tag, name) {
+      const g = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color: colorHex, emissive: colorHex, emissiveIntensity: 0.35, transparent: true, opacity: 0.9 });
+      const px = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.5, 0.12), mat);
+      const px2 = px.clone(); px.position.set(0, 1.1, -0.95); px2.position.set(0, 1.1, 0.95);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 2.02), mat); top.position.set(0, 1.9, 0);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.35, 1.86),
+        new THREE.MeshStandardMaterial({ color: colorHex, transparent: true, opacity: 0.32, emissive: colorHex, emissiveIntensity: 0.3 }));
+      door.position.set(0, 2.9, 0); /* 关闭时降到 1.15 */
+      g.add(px, px2, top, door);
+      const lbl = makeLabelSprite([
+        { text: tag, y: 40, size: 34, bold: true, mono: true, color: '#' + colorHex.toString(16).padStart(6, '0') },
+        { text: name, y: 82, size: 22, color: '#c9d2e4' },
+      ], 2.0, 1.0, { w: 256, h: 128 });
+      lbl.position.set(0, 2.75, 0); g.add(lbl);
+      g.position.x = x; scene.add(g);
+      return { group: g, door, open: true };
+    }
+    const gate1 = arch(G1X, 0xfb923c, '①', '喂入前丢包');
+    const gate3 = arch(G3X, 0x22d3ee, '③', '解码不输出');
+    const gate4 = arch(G4X, 0x34d399, '④', '输出不渲染');
+
+    const decMat = new THREE.MeshStandardMaterial({ color: 0x818cf8, transparent: true, opacity: 0.16, emissive: 0x818cf8, emissiveIntensity: 0.18 });
+    const dec = new THREE.Mesh(new THREE.BoxGeometry(DEC_OUT - DEC_IN + 0.4, 1.5, 1.9), decMat);
+    dec.position.set((DEC_IN + DEC_OUT) / 2, 1.1, 0); scene.add(dec);
+    const decLbl = makeLabelSprite([
+      { text: '解码器', y: 40, size: 28, bold: true, color: '#b9c1ff' },
+      { text: '② skip_frame', y: 82, size: 22, mono: true, color: '#c9d2e4' },
+    ], 2.2, 1.1, { w: 256, h: 128 });
+    decLbl.position.set((DEC_IN + DEC_OUT) / 2, 2.55, 0); scene.add(decLbl);
+
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.7, 2.1),
+      new THREE.MeshStandardMaterial({ color: 0x34d399, emissive: 0x34d399, emissiveIntensity: 0.5, transparent: true, opacity: 0.85 }));
+    screen.position.set(SCR_X, 1.2, 0); scene.add(screen);
+    const scrLbl = makeLabelSprite([{ text: '上屏', y: 64, size: 34, bold: true, color: '#8ff5cf' }], 1.4, 0.7, { w: 192, h: 96 });
+    scrLbl.position.set(SCR_X, 2.5, 0); scene.add(scrLbl);
+    const demuxLbl = makeLabelSprite([{ text: 'Demux', y: 64, size: 30, bold: true, color: '#c9d2e4' }], 1.6, 0.8, { w: 192, h: 96 });
+    demuxLbl.position.set(-6.8, 1.6, 0); scene.add(demuxLbl);
+
+    /* ---------- 控件状态 ---------- */
+    const sw = { g1: $('#m4-g1'), g3: $('#m4-g3'), g4: $('#m4-g4') };
+    let ladder = 0;
+    const FR = {
+      nonref: GOP.filter(f => !f.ref).length / GOP.length,
+      B:      GOP.filter(f => f.t === 'B').length / GOP.length,
+      nonI:   GOP.filter(f => !f.key).length / GOP.length,
+    };
+    /* BIDIR 丢参考 B → 依赖它们的帧花屏 */
+    const CORRUPT_BIDIR = new Set(GOP.filter(f => f.ref && f.t === 'B')
+      .flatMap(f => [...transitiveDependents(f.id)]));
+    function updateCosts() {
+      let dec = 1;
+      if (ladder >= 32) dec = 1 - FR.nonI;
+      else if (ladder >= 16) dec = 1 - FR.B;
+      else if (ladder >= 8 || sw.g1.checked) dec = 1 - FR.nonref;
+      else if (sw.g1.checked) dec = 1 - FR.nonref;
+      const out = sw.g3.checked ? 0 : dec;
+      const rnd = sw.g4.checked ? 0 : out;
+      const set = (k, v) => {
+        $('#m4-cv-' + k).textContent = Math.round(v * 100) + '%';
+        $('#m4-cf-' + k).style.width = (v * 100) + '%';
+      };
+      set('dec', dec); set('out', out); set('rnd', rnd);
+      $('#m4-warn').classList.toggle('show', ladder >= 16);
+      const badge = $('#m4-ladder-badge');
+      badge.innerHTML = ladder === 0 ? '<span class="badge" style="color:#8b96ab;border-color:#8b96ab55">关闭</span>'
+        : ladder === 8 ? '<span class="badge ref">NONREF · 无损 ✅</span>'
+        : '<span class="badge bad">参考链破坏 · 有损 ⚠️</span>';
+      gate1.open = !sw.g1.checked; gate3.open = !sw.g3.checked; gate4.open = !sw.g4.checked;
+      decMat.opacity = ladder ? 0.32 : 0.16;
+    }
+    Object.values(sw).forEach(x => x.addEventListener('change', updateCosts));
+    $$('#m4-ladder button').forEach(b => b.addEventListener('click', () => {
+      ladder = +b.dataset.level;
+      $$('#m4-ladder button').forEach(x => {
+        x.classList.toggle('on', x === b);
+        x.classList.toggle('danger', x === b && ladder >= 16);
+      });
+      updateCosts();
+    }));
+    updateCosts();
+
+    /* ---------- packet 方块 ---------- */
+    const cubes = []; /* {mesh,f,x,mode:'run'|'fall',vy,alpha,corrupt} */
+    const cubeGeo = new THREE.BoxGeometry(0.42, 0.42, 0.42);
+    let spawnT = 0, gi = 0;
+    const SPEED = 2.1;
+    function killAt(cube) { cube.mode = 'fall'; cube.vy = 0.4; }
+    const m4api = { renderer, camera, container };
+    visLoop(container, (dt, t) => {
+      fitRenderer(m4api);
+      controls.update();
+      spawnT -= dt;
+      if (spawnT <= 0 && cubes.length < 40) {
+        spawnT = 0.5;
+        const f = GOP[gi++ % GOP.length];
+        const col = new THREE.Color(colorOf(f));
+        const m = new THREE.Mesh(cubeGeo, new THREE.MeshStandardMaterial({
+          color: col, emissive: col, emissiveIntensity: 0.3, transparent: true, roughness: 0.5 }));
+        m.position.set(-7.6, 0.65, 0);
+        scene.add(m);
+        cubes.push({ mesh: m, f, mode: 'run', vy: 0, corrupt: false });
+      }
+      for (let i = cubes.length - 1; i >= 0; i--) {
+        const c = cubes[i], m = c.mesh, px = m.position.x;
+        if (c.mode === 'run') {
+          const nx = px + SPEED * dt;
+          const crossed = X => px < X && nx >= X;
+          if (crossed(G1X) && sw.g1.checked && !c.f.ref) killAt(c);
+          if (c.mode === 'run' && crossed(DEC_IN)) {
+            if ((ladder >= 8 && !c.f.ref) || (ladder >= 16 && c.f.t === 'B') || (ladder >= 32 && !c.f.key)) killAt(c);
+          }
+          if (c.mode === 'run' && crossed(DEC_OUT)) {
+            /* BIDIR 丢了参考 B → 依赖帧解码出错（花屏） */
+            if (ladder >= 16 && ladder < 32 && CORRUPT_BIDIR.has(c.f.id) && c.f.ref === false) c.corrupt = true;
+            if (ladder >= 16 && ladder < 32 && CORRUPT_BIDIR.has(c.f.id)) c.corrupt = true;
+            if (c.corrupt) { m.material.color.set(C.bad); m.material.emissive.set(C.bad); }
+          }
+          if (c.mode === 'run' && crossed(G3X) && sw.g3.checked) killAt(c);
+          if (c.mode === 'run' && crossed(G4X) && sw.g4.checked) killAt(c);
+          if (c.mode === 'run') {
+            m.position.x = nx;
+            m.rotation.y += dt * 1.2;
+            if (c.corrupt && !reduced) m.position.z = Math.sin(t * 25 + i) * 0.06;
+            if (nx >= SCR_X - 0.15) {
+              screen.material.emissiveIntensity = 1.2; /* 上屏闪一下 */
+              scene.remove(m); m.material.dispose(); cubes.splice(i, 1);
+            }
+          }
+        }
+        if (c.mode === 'fall') {
+          c.vy += dt * 8; m.position.y -= c.vy * dt;
+          m.rotation.x += dt * 4; m.material.opacity = Math.max(0, m.material.opacity - dt * 1.4);
+          if (m.position.y < -3) { scene.remove(m); m.material.dispose(); cubes.splice(i, 1); }
+        }
+      }
+      screen.material.emissiveIntensity = Math.max(0.5, screen.material.emissiveIntensity - dt * 1.6);
+      /* 闸门开合动画 */
+      for (const g of [gate1, gate3, gate4]) {
+        const target = g.open ? 2.9 : 1.15;
+        g.door.position.y += (target - g.door.position.y) * Math.min(1, dt * 7);
+      }
+      renderer.render(scene, camera);
+    });
+    scenes.push({ renderer, camera, container, scene });
+  }
+
+  /* ---------- 启动 ---------- */
+  buildGopScene($('#m2-wrap'));
+  buildPipeline($('#m4-wrap'));
+  buildGopScene($('#hero-bg'), { hero: true });
+  window.__scenes = scenes;
+})();
+</script>
+
+</body>
+</html>
