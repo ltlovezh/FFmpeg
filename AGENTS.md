@@ -104,3 +104,9 @@ header to every new source file using a nearby file as the template.
 
 ## 技术文章
 - 把markdown技术文章放到`articles/`目录下
+- **先 Markdown、后可视化**：文章内容一律先写/改 `articles/<name>.md`
+  （唯一事实源），再生成或同步同名交互可视化页 `articles/<name>.html`；
+  md 有修改时，HTML 必须跟着同步（示例、数字、术语严格一致）。
+- 生成/同步 HTML 用 `/article-viz` skill（`~/.claude/skills/article-viz/`），
+  其中沉淀了页面架构、浅色主题设计 token、Three.js 降级模式、交互模块
+  选型菜单与验证清单；md 与 html 放同一个 commit。
