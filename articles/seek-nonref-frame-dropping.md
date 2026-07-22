@@ -1,8 +1,10 @@
 # 点播 Seek 性能优化：丢帧的原理、判定与硬解落地
 
-> 🎮 本文配有一个交互可视化版本：[seek-nonref-frame-dropping.html](seek-nonref-frame-dropping.html)
+> 🎮 本文配有一个交互可视化版本：线上直接访问
+> **<https://seek-nonref-frame-dropping.vercel.app>**（或本地打开
+> [seek-nonref-frame-dropping.html](seek-nonref-frame-dropping.html)）
 > ——参考链 3D 依赖图、NAL 头字节检查器、四作用点流水线等可动手操作的演示
-> （浏览器打开即可，3D 场景经 CDN 加载 Three.js，需联网）。
+> （3D 场景经 CDN 加载 Three.js，需联网）。
 
 用户拖动进度条之后，画面多久能出来，是点播播放器最直观的体验指标之一。
 Seek 慢的根源几乎总是同一个：**目标时间点不是关键帧，播放器必须从前面的
