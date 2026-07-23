@@ -385,11 +385,39 @@ static int packet_droppable(const uint8_t *data, int size,
   `pkt->flags & AV_PKT_FLAG_DISPOSABLE`。
   **缺点：封装工具没写 `sdtp` 就拿不到，此时退回 3.3 的 NAL 头解析。**
 - **解析层——轻量解析，不解码**。`av_parser_parse2()` 是 FFmpeg 的
-  码流解析器：只读各级头部信息、完全不解码像素，就能填出帧类型
-  `pict_type`（I/B/P）和是否关键帧 `key_frame`，成本很低。
-- **解码层——解完才知道，只能事后用**。解码输出的 `AVFrame` 上带
-  `pict_type` 和 `AV_FRAME_FLAG_KEY`。此时解码成本已经花掉，只能服务
-  "解码后丢帧"的场景（比如作用点④的不渲染判定）。
+  码流解析器：把压缩包喂给它，它只解析各级头部（NAL 头、slice
+  header……）、完全不碰像素。调用返回后，结果直接挂在解析器上下文
+  `AVCodecParserContext` 的两个字段上：
+
+  ```c
+  AVCodecParserContext *pc = av_parser_init(AV_CODEC_ID_H264);
+  uint8_t *out; int out_size;              /* 组帧输出，这里用不到 */
+  av_parser_parse2(pc, avctx, &out, &out_size,
+                   pkt->data, pkt->size, pkt->pts, pkt->dts, -1);
+
+  pc->pict_type;  /* 帧类型：AV_PICTURE_TYPE_I / P / B */
+  pc->key_frame;  /* 1 = 关键帧（IDR，或带 recovery point SEI，见 3.1） */
+  ```
+
+  内部原理就是 3.1/3.2 那套：H.264 解析器读 slice header 的
+  `slice_type` 查表得到 `pict_type`，见到 IDR 或 recovery point SEI 就置
+  `key_frame`（[`libavcodec/h264_parser.c:364`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364) 附近）。
+  另外"是否关键帧"还有个更便宜的来源：demuxer 按容器关键帧索引直接
+  打在包上的 `AV_PKT_FLAG_KEY` 标记
+  （[`libavformat/mov.c:11808`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808)），
+  读 `pkt->flags` 即可，连解析都不用。
+- **解码层——解完才知道，只能事后用**。解码输出的每个 `AVFrame` 自带
+  这两个信息，直接读：
+
+  ```c
+  while (avcodec_receive_frame(avctx, frame) == 0) {
+      frame->pict_type;                  /* AV_PICTURE_TYPE_I / P / B */
+      frame->flags & AV_FRAME_FLAG_KEY;  /* 非 0 = 关键帧 */
+  }
+  ```
+
+  此时解码成本已经花掉，这条路只能服务"解码后丢帧"的场景（比如
+  作用点④的不渲染判定），省不了解码本身。
 
 ---
 

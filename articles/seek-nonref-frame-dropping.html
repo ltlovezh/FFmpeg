@@ -670,11 +670,19 @@ footer .links { margin-bottom: 8px; }
         判定只是查一个 bit。缺点：封装工具没写 <code>sdtp</code> 就拿不到，
         得退回 NAL 头解析兜底；</li>
       <li><strong>解析层——轻量解析，不解码</strong>：<code>av_parser_parse2()</code> 是 FFmpeg
-        的码流解析器，只读各级头部信息、完全不碰像素，就能填出帧类型 <code>pict_type</code>（I/B/P）
-        和是否关键帧 <code>key_frame</code>，成本很低；</li>
-      <li><strong>解码层——解完才知道，只能事后用</strong>：解码输出的 <code>AVFrame</code> 上带
-        <code>pict_type</code>，此时解码成本已经花掉，只能服务「解码后丢帧」
-        （比如作用点④的不渲染判定）。</li>
+        的码流解析器，把压缩包喂给它，它只解析各级头部（NAL 头、slice header）、完全不碰像素。
+        调用返回后直接读解析器上下文的两个字段：<code>pc-&gt;pict_type</code>
+        （帧类型 <code>AV_PICTURE_TYPE_I / P / B</code>，解析 slice_type 查表得来）和
+        <code>pc-&gt;key_frame</code>（1＝关键帧：IDR 或 recovery point SEI）。
+        「是否关键帧」还有个更便宜的来源——demuxer 按容器关键帧索引直接打在包上的
+        <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808"
+        target="_blank" rel="noopener"><code>AV_PKT_FLAG_KEY</code></a> 标记，
+        读 <code>pkt-&gt;flags</code> 即可，连解析都不用；</li>
+      <li><strong>解码层——解完才知道，只能事后用</strong>：解码输出的每个 <code>AVFrame</code>
+        自带这两个信息，直接读 <code>frame-&gt;pict_type</code>（I/P/B）和
+        <code>frame-&gt;flags &amp; AV_FRAME_FLAG_KEY</code>（非 0＝关键帧）。
+        此时解码成本已经花掉，这条路只能服务「解码后丢帧」（比如作用点④的不渲染判定），
+        省不了解码本身。</li>
     </ul>
   </div>
 </section>
