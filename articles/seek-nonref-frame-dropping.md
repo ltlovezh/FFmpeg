@@ -23,7 +23,9 @@ Seek 慢的根源几乎总是同一个：**目标时间点不是关键帧（不�
    解码交给芯片里的专用硬件），丢帧可以发生在流水线的四个不同位置，
    成本收益各不相同。
 
-文中 FFmpeg 源码定位均基于当前仓库代码（`路径:行号`）。
+文中 FFmpeg 源码定位以 `路径:行号` 标注，点击可跳转到 FFmpeg 官方仓库
+master 分支的对应位置（行号基于写作时的代码，官方代码演进后可能有少量
+偏移）。
 
 ```mermaid
 flowchart LR
@@ -239,13 +241,13 @@ I/B/P 则要再多解析一层 slice header：`slice_type` 是其中第二个字
 | 4 / 9 | 4 | SI |
 
 值 ≥5 表示"整帧所有 slice 同类型"。FFmpeg 的映射表在
-`libavcodec/h264data.c:37`（`ff_h264_golomb_to_pict_type[slice_type % 5]`），
-parser 的完整用法在 `libavcodec/h264_parser.c:364`。
+[`libavcodec/h264data.c:37`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264data.c#L37)（`ff_h264_golomb_to_pict_type[slice_type % 5]`），
+parser 的完整用法在 [`libavcodec/h264_parser.c:364`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364)。
 
 关键帧判定除了 `nal_unit_type == 5`（IDR），还要认 **recovery point
 SEI**：有些流的关键帧不是 IDR，而是用这种 SEI 消息标出"从这里进入、
 播放若干帧后画面可完全恢复"的位置（多见于 open-GOP 流，open-GOP 的
-含义见 3.2 ②；FFmpeg 的处理在 `libavcodec/h264_parser.c:366`）。
+含义见 3.2 ②；FFmpeg 的处理在 [`libavcodec/h264_parser.c:366`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L366)）。
 
 ### 3.2 H.265：看 `nal_unit_type` 的奇偶
 
@@ -275,7 +277,7 @@ VCL 类型 0~15 成对出现，**偶数（`_N` 后缀）= 非参考，奇数（`
 | VCL_N10/12/14（保留） | 10/12/14 | VCL_R11/13/15（保留） | 11/13/15 |
 
 FFmpeg 的判定函数就是这张表：`ff_hevc_nal_is_nonref()`，
-`libavcodec/hevc/hevcdec.h:653`。
+[`libavcodec/hevc/hevcdec.h:653`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.h#L653)。
 
 两个 HEVC 特有的细节必须写清楚：
 
@@ -325,7 +327,7 @@ CRA32 本身、不依赖更早的内容，Seek 后仍可正常解码。这是 Se
 另一类"必丢帧"，与性能优化无关，属于正确性要求。
 
 I/B/P 判定：HEVC slice header 的 `slice_type` 取值与 H.264 **不同**——
-`0 = B, 1 = P, 2 = I`（映射见 `libavcodec/hevc/parser.c:143`）。
+`0 = B, 1 = P, 2 = I`（映射见 [`libavcodec/hevc/parser.c:143`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/parser.c#L143)）。
 
 ### 3.3 判定代码：一个包（AU）能不能整包丢
 
@@ -378,8 +380,8 @@ static int packet_droppable(const uint8_t *data, int size,
   （sample dependency table：封装时逐帧记录"是否被别的帧依赖"的元数据
   表）。demuxer 解析到 `sample_is_depended_on == 2`（明确没人依赖），就
   直接在数据包上打 `AV_PKT_FLAG_DISPOSABLE` 标记
-  （`libavformat/mov.c:11692`；用 x265 编码时输出也自带，
-  `libavcodec/libx265.c:932`）。判定只是查一个 bit：
+  （[`libavformat/mov.c:11806`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806)；用 x265 编码时输出也自带，
+  [`libavcodec/libx265.c:932`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/libx265.c#L932)）。判定只是查一个 bit：
   `pkt->flags & AV_PKT_FLAG_DISPOSABLE`。
   **缺点：封装工具没写 `sdtp` 就拿不到，此时退回 3.3 的 NAL 头解析。**
 - **解析层——轻量解析，不解码**。`av_parser_parse2()` 是 FFmpeg 的
@@ -423,7 +425,7 @@ flowchart LR
 ### 4.1 作用点②：FFmpeg 软解的 `skip_frame`（原生支持）
 
 FFmpeg 解码器通过 `AVCodecContext.skip_frame` 内建了这套逻辑，命令行对应
-`-skip_frame noref`（选项表 `libavcodec/options_table.h:260`）：
+`-skip_frame noref`（选项表 [`libavcodec/options_table.h:260`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/options_table.h#L260)）：
 
 ```c
 AVCodecContext *avctx = ...;
@@ -434,7 +436,7 @@ avctx->skip_frame = AVDISCARD_DEFAULT;  /* 恢复 */
 
 两个解码器的实现位置值得在文章里点名，因为它揭示了"丢在多早"：
 
-**H.264**（`libavcodec/h264dec.c:626`）——在 NAL 遍历循环的最前面：
+**H.264**（[`libavcodec/h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626)）——在 NAL 遍历循环的最前面：
 
 ```c
 if (avctx->skip_frame >= AVDISCARD_NONREF &&
@@ -443,9 +445,9 @@ if (avctx->skip_frame >= AVDISCARD_NONREF &&
 ```
 
 非参考 NAL 直接 `continue`，**连 slice header 都不解析**。帧级还有一处
-阶梯式判断兜底（`libavcodec/h264_slice.c:2141`）。
+阶梯式判断兜底（[`libavcodec/h264_slice.c:2148`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_slice.c#L2148)）。
 
-**HEVC**（`libavcodec/hevc/hevcdec.c:3766`）：
+**HEVC**（[`libavcodec/hevc/hevcdec.c:3795`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795)）：
 
 ```c
 if (s->avctx->skip_frame >= AVDISCARD_ALL ||
@@ -453,7 +455,7 @@ if (s->avctx->skip_frame >= AVDISCARD_ALL ||
     continue;
 ```
 
-`skip_frame` 是一个阶梯（`libavcodec/defs.h:223`）：
+`skip_frame` 是一个阶梯（[`libavcodec/defs.h:223`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/defs.h#L223)）：
 
 | 值 | 丢弃范围 | 参考链 | 适用场景 |
 | --- | --- | --- | --- |
@@ -471,7 +473,7 @@ if (s->avctx->skip_frame >= AVDISCARD_ALL ||
 
 - `avctx->skip_loop_filter = AVDISCARD_ALL`：跳过去块滤波（loop
   filter，解码末尾用来消除块状压缩痕迹的滤波步骤，
-  `libavcodec/h264_slice.c:1962`），H.264 软解可省 10%~20%。注意：参考
+  [`libavcodec/h264_slice.c:1962`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_slice.c#L1962)），H.264 软解可省 10%~20%。注意：参考
   帧跳了滤波，画面会与编码器所用的参考产生细微偏差，且误差沿参考链
   逐帧累积（俗称"漂移"）；保守做法是只设到 `AVDISCARD_NONREF`（只跳
   非参考帧的滤波，零风险）；
@@ -498,9 +500,9 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 2. **自解析 NAL 头**：3.3 的函数，~30 行，无依赖，推荐兜底方案；
 3. **FFmpeg 现成 BSF**（bitstream filter，码流过滤器：不解码，直接对
    压缩码流做删改）：`filter_units` 的 `discard` 选项
-   （`libavcodec/bsf/filter_units.c:251`），判定逻辑与解码器一致——H.264 按
-   `nal_ref_idc`（`libavcodec/cbs_h264.c:647`），H.265 按 `_N` 类型表
-   （`libavcodec/cbs_h265.c:660`）。包内 VCL 全被删掉时，BSF 返回
+   （[`libavcodec/bsf/filter_units.c:251`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251)），判定逻辑与解码器一致——H.264 按
+   `nal_ref_idc`（[`libavcodec/cbs_h264.c:647`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647)），H.265 按 `_N` 类型表
+   （[`libavcodec/cbs_h265.c:660`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660)）。包内 VCL 全被删掉时，BSF 返回
    EAGAIN（"暂无输出"），整包自动被吞掉。可以先用命令行验证收益：
 
    ```bash
@@ -527,7 +529,7 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 - **Android**：`releaseOutputBuffer(index, /*render=*/false)`；
   FFmpeg wrapper 对应 `av_mediacodec_release_buffer(buffer, 0)`
-  （`libavcodec/mediacodec.h:86`）；
+  （[`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86)）；
 - **iOS**：拿到 `CVPixelBuffer` 后直接释放，不送显示层。
 
 这一层永远可用，也是所有播放器精确 Seek 的"最后一公里"：解码输出的
@@ -564,7 +566,7 @@ flowchart TB
 
 | 模型 | 例子 | `skip_frame=NONREF` | 原因 |
 | --- | --- | --- | --- |
-| hwaccel | **VideoToolbox**、VAAPI（Linux）、D3D11VA（Windows）、NVDEC（NVIDIA） | ✅ 生效 | NAL 解析和丢弃决策在 FFmpeg 软件层完成，`h264dec.c:626` 的 `continue` 发生在任何 hwaccel 回调之前，被丢的 NAL 根本不会提交给硬件 |
+| hwaccel | **VideoToolbox**、VAAPI（Linux）、D3D11VA（Windows）、NVDEC（NVIDIA） | ✅ 生效 | NAL 解析和丢弃决策在 FFmpeg 软件层完成，[`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) 的 `continue` 发生在任何 hwaccel 回调之前，被丢的 NAL 根本不会提交给硬件 |
 | wrapper | **MediaCodec**（`mediacodecdec.c`） | ❌ 不生效 | 整包透传给系统解码器，FFmpeg 不拆 NAL；wrapper 源码中没有任何 `skip_frame` 处理 |
 
 所以：**iOS 上走 FFmpeg + videotoolbox hwaccel，设置
@@ -718,16 +720,16 @@ MediaCodec 这类 wrapper/黑盒解码器不支持——但也不需要支持：
 
 | 主题 | 位置 |
 | --- | --- |
-| `AVDiscard` 阶梯定义 | `libavcodec/defs.h:223` |
-| H.264 NAL 级 skip_frame | `libavcodec/h264dec.c:626` |
-| H.264 帧级 skip_frame 阶梯 | `libavcodec/h264_slice.c:2141` |
-| H.264 skip_loop_filter | `libavcodec/h264_slice.c:1962` |
-| H.264 slice_type → pict_type | `libavcodec/h264data.c:37`、`libavcodec/h264_parser.c:364` |
-| HEVC 非参考 NAL 判定 | `libavcodec/hevc/hevcdec.h:653` |
-| HEVC NAL 级 skip_frame | `libavcodec/hevc/hevcdec.c:3766` |
-| HEVC parser slice_type 映射 | `libavcodec/hevc/parser.c:143` |
-| filter_units BSF discard 选项 | `libavcodec/bsf/filter_units.c:251` |
-| CBS 丢弃判定（H.264/H.265） | `libavcodec/cbs_h264.c:647`、`libavcodec/cbs_h265.c:660` |
-| MP4 sdtp → DISPOSABLE flag | `libavformat/mov.c:11692` |
-| MediaCodec 渲染控制 API | `libavcodec/mediacodec.h:86` |
-| skip_frame 命令行选项表 | `libavcodec/options_table.h:260` |
+| `AVDiscard` 阶梯定义 | [`libavcodec/defs.h:223`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/defs.h#L223) |
+| H.264 NAL 级 skip_frame | [`libavcodec/h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) |
+| H.264 帧级 skip_frame 阶梯 | [`libavcodec/h264_slice.c:2148`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_slice.c#L2148) |
+| H.264 skip_loop_filter | [`libavcodec/h264_slice.c:1962`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_slice.c#L1962) |
+| H.264 slice_type → pict_type | [`libavcodec/h264data.c:37`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264data.c#L37)、[`libavcodec/h264_parser.c:364`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364) |
+| HEVC 非参考 NAL 判定 | [`libavcodec/hevc/hevcdec.h:653`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.h#L653) |
+| HEVC NAL 级 skip_frame | [`libavcodec/hevc/hevcdec.c:3795`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795) |
+| HEVC parser slice_type 映射 | [`libavcodec/hevc/parser.c:143`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/parser.c#L143) |
+| filter_units BSF discard 选项 | [`libavcodec/bsf/filter_units.c:251`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251) |
+| CBS 丢弃判定（H.264/H.265） | [`libavcodec/cbs_h264.c:647`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647)、[`libavcodec/cbs_h265.c:660`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660) |
+| MP4 sdtp → DISPOSABLE flag | [`libavformat/mov.c:11806`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806) |
+| MediaCodec 渲染控制 API | [`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86) |
+| skip_frame 命令行选项表 | [`libavcodec/options_table.h:260`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/options_table.h#L260) |

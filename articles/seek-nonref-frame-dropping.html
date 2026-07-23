@@ -583,7 +583,7 @@ footer .links { margin-bottom: 8px; }
     <li><strong>H.265</strong>：看 2 字节 NAL 头里的 <code>nal_unit_type</code>（6 bit）。
       VCL 类型 0~15 成对出现，<strong>偶数（<code>_N</code> 后缀）= 非参考</strong>。
       FFmpeg 的判定函数就是这张表：<code>ff_hevc_nal_is_nonref()</code>
-      （libavcodec/hevc/hevcdec.h:653）。</li>
+      （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.h#L653" target="_blank" rel="noopener"><code>libavcodec/hevc/hevcdec.h:653</code></a>）。</li>
   </ul>
 
   <div class="module" id="m3">
@@ -666,7 +666,7 @@ footer .links { margin-bottom: 8px; }
     <ul>
       <li><strong>容器层——读包上的现成标记，零成本</strong>：MP4 有个可选的 <code>sdtp</code> box
         （封装时逐帧记录「是否被别的帧依赖」的元数据表），demuxer 解析后直接在数据包上打
-        <code>AV_PKT_FLAG_DISPOSABLE</code> 标记（libavformat/mov.c:11692），
+        <code>AV_PKT_FLAG_DISPOSABLE</code> 标记（<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806" target="_blank" rel="noopener"><code>libavformat/mov.c:11806</code></a>），
         判定只是查一个 bit。缺点：封装工具没写 <code>sdtp</code> 就拿不到，
         得退回 NAL 头解析兜底；</li>
       <li><strong>解析层——轻量解析，不解码</strong>：<code>av_parser_parse2()</code> 是 FFmpeg
@@ -726,7 +726,7 @@ footer .links { margin-bottom: 8px; }
       <table class="t">
         <tr><th>作用点</th><th>省掉的成本</th><th>适用帧</th><th>依赖</th></tr>
         <tr><td>① 喂入前丢包</td><td>解码 + 输出 + 渲染，全省</td><td>仅非参考帧</td><td>无（任何解码器都可用）</td></tr>
-        <tr><td>② 解码器内跳过 <code>skip_frame</code></td><td>同上（省掉 slice 解码）</td><td>仅非参考帧（NONREF 级）</td><td>FFmpeg 软解 / hwaccel（h264dec.c:626、hevcdec.c:3766）</td></tr>
+        <tr><td>② 解码器内跳过 <code>skip_frame</code></td><td>同上（省掉 slice 解码）</td><td>仅非参考帧（NONREF 级）</td><td>FFmpeg 软解 / hwaccel（<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>hevcdec.c:3795</code></a>）</td></tr>
         <tr><td>③ 解码不输出</td><td>输出拷贝/回调 + 渲染</td><td><b>任何帧</b>（参考链由解码器维持）</td><td>API 34 <code>DECODE_ONLY</code> / VT <code>DoNotOutputFrame</code></td></tr>
         <tr><td>④ 输出不渲染</td><td>仅渲染（纹理上传/GL）</td><td>任何帧</td><td>无</td></tr>
       </table>
@@ -763,7 +763,7 @@ footer .links { margin-bottom: 8px; }
         <h4>hwaccel 模型（iOS VideoToolbox）</h4>
         <div class="sub4">-hwaccel videotoolbox</div>
         <div class="m5-box">AVPacket<small>demux 输出的 AU</small></div>
-        <div class="m5-box sw-layer">FFmpeg 软件层：拆 NAL、解析头<small>h264dec.c:626 / hevcdec.c:3766 在这里 continue</small></div>
+        <div class="m5-box sw-layer">FFmpeg 软件层：拆 NAL、解析头<small><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a> / <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>hevcdec.c:3795</code></a> 在这里 continue</small></div>
         <div class="m5-box hw-layer">硬件解码<small>hwaccel start_frame / decode_slice</small></div>
         <div class="m5-verdict" id="m5-verdict-l" style="color:var(--muted)">—</div>
         <div class="m5-note" id="m5-note-l"></div>
@@ -942,18 +942,18 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
   <div class="tscroll">
     <table class="t">
       <tr><th>主题</th><th>位置</th></tr>
-      <tr><td>AVDiscard 阶梯定义</td><td><code>libavcodec/defs.h:223</code></td></tr>
-      <tr><td>H.264 NAL 级 skip_frame</td><td><code>libavcodec/h264dec.c:626</code></td></tr>
-      <tr><td>H.264 帧级 skip_frame 阶梯</td><td><code>libavcodec/h264_slice.c:2141</code></td></tr>
-      <tr><td>H.264 skip_loop_filter</td><td><code>libavcodec/h264_slice.c:1962</code></td></tr>
-      <tr><td>H.264 slice_type → pict_type</td><td><code>libavcodec/h264data.c:37</code>、<code>libavcodec/h264_parser.c:364</code></td></tr>
-      <tr><td>HEVC 非参考 NAL 判定</td><td><code>libavcodec/hevc/hevcdec.h:653</code></td></tr>
-      <tr><td>HEVC NAL 级 skip_frame</td><td><code>libavcodec/hevc/hevcdec.c:3766</code></td></tr>
-      <tr><td>HEVC parser slice_type 映射</td><td><code>libavcodec/hevc/parser.c:143</code></td></tr>
-      <tr><td>filter_units BSF discard 选项</td><td><code>libavcodec/bsf/filter_units.c:251</code></td></tr>
-      <tr><td>CBS 丢弃判定（H.264/H.265）</td><td><code>libavcodec/cbs_h264.c:647</code>、<code>libavcodec/cbs_h265.c:660</code></td></tr>
-      <tr><td>MP4 sdtp → DISPOSABLE flag</td><td><code>libavformat/mov.c:11692</code></td></tr>
-      <tr><td>MediaCodec 渲染控制 API</td><td><code>libavcodec/mediacodec.h:86</code></td></tr>
+      <tr><td>AVDiscard 阶梯定义</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/defs.h#L223" target="_blank" rel="noopener"><code>libavcodec/defs.h:223</code></a></td></tr>
+      <tr><td>H.264 NAL 级 skip_frame</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>libavcodec/h264dec.c:626</code></a></td></tr>
+      <tr><td>H.264 帧级 skip_frame 阶梯</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_slice.c#L2148" target="_blank" rel="noopener"><code>libavcodec/h264_slice.c:2148</code></a></td></tr>
+      <tr><td>H.264 skip_loop_filter</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_slice.c#L1962" target="_blank" rel="noopener"><code>libavcodec/h264_slice.c:1962</code></a></td></tr>
+      <tr><td>H.264 slice_type → pict_type</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264data.c#L37" target="_blank" rel="noopener"><code>libavcodec/h264data.c:37</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364" target="_blank" rel="noopener"><code>libavcodec/h264_parser.c:364</code></a></td></tr>
+      <tr><td>HEVC 非参考 NAL 判定</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.h#L653" target="_blank" rel="noopener"><code>libavcodec/hevc/hevcdec.h:653</code></a></td></tr>
+      <tr><td>HEVC NAL 级 skip_frame</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>libavcodec/hevc/hevcdec.c:3795</code></a></td></tr>
+      <tr><td>HEVC parser slice_type 映射</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/parser.c#L143" target="_blank" rel="noopener"><code>libavcodec/hevc/parser.c:143</code></a></td></tr>
+      <tr><td>filter_units BSF discard 选项</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251" target="_blank" rel="noopener"><code>libavcodec/bsf/filter_units.c:251</code></a></td></tr>
+      <tr><td>CBS 丢弃判定（H.264/H.265）</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647" target="_blank" rel="noopener"><code>libavcodec/cbs_h264.c:647</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660" target="_blank" rel="noopener"><code>libavcodec/cbs_h265.c:660</code></a></td></tr>
+      <tr><td>MP4 sdtp → DISPOSABLE flag</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806" target="_blank" rel="noopener"><code>libavformat/mov.c:11806</code></a></td></tr>
+      <tr><td>MediaCodec 渲染控制 API</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>libavcodec/mediacodec.h:86</code></a></td></tr>
     </table>
   </div>
 </section>
@@ -964,7 +964,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
   <div class="links">
     📄 文字版：<a href="https://github.com/ltlovezh/FFmpeg/blob/learning/articles/seek-nonref-frame-dropping.md"
       target="_blank" rel="noopener">GitHub 渲染版</a>
-    &nbsp;·&nbsp; 源码定位基于本仓库当前代码
+    &nbsp;·&nbsp; 源码引用可点击跳转 FFmpeg 官方 master 对应位置（行号基于写作时代码，或有少量偏移）
   </div>
   <div>点播 Seek 性能优化 · 交互可视化版 · Three.js 由 jsDelivr CDN 加载</div>
 </footer>
