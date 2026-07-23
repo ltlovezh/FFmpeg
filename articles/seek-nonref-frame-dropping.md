@@ -386,27 +386,31 @@ static int packet_droppable(const uint8_t *data, int size,
   **缺点：封装工具没写 `sdtp` 就拿不到，此时退回 3.3 的 NAL 头解析。**
 - **解析层——轻量解析，不解码**。`av_parser_parse2()` 是 FFmpeg 的
   码流解析器：把压缩包喂给它，它只解析各级头部（NAL 头、slice
-  header……）、完全不碰像素。调用返回后，结果直接挂在解析器上下文
-  `AVCodecParserContext` 的两个字段上：
+  header……）、完全不碰像素。基于 demuxer 吐出的 `AVPacket`（下面的
+  `pkt`）判定帧类型和关键帧，完整写法：
 
   ```c
-  /* parser：解析器上下文（AVCodecParserContext），解析结果挂在它身上 */
-  AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_H264);
-  uint8_t *out; int out_size;              /* 组帧输出，这里用不到 */
-  av_parser_parse2(parser, avctx, &out, &out_size,   /* pkt 是压缩数据包 */
+  /* ① 是否关键帧：最便宜——demuxer 按容器关键帧索引已打好标记，
+        读 flags 即可，连解析都不用 */
+  int is_key = !!(pkt->flags & AV_PKT_FLAG_KEY);
+
+  /* ② 帧类型 I/B/P：把 pkt 过一遍轻量解析器（只读头部，不解码像素）。
+        avctx 是按流参数填好的 AVCodecContext，无需打开解码器 */
+  AVCodecParserContext *parser = av_parser_init(avctx->codec_id);
+  uint8_t *out; int out_size;                   /* 组帧输出，这里用不到 */
+  av_parser_parse2(parser, avctx, &out, &out_size,
                    pkt->data, pkt->size, pkt->pts, pkt->dts, -1);
 
-  parser->pict_type;  /* 帧类型：AV_PICTURE_TYPE_I / P / B */
-  parser->key_frame;  /* 1 = 关键帧（IDR，或带 recovery point SEI，见 3.1） */
+  enum AVPictureType type = parser->pict_type;  /* AV_PICTURE_TYPE_I / P / B */
+  int key_by_parser       = parser->key_frame;  /* 1 = 关键帧（IDR / recovery
+                                                   point SEI，见 3.1） */
   ```
 
   内部原理就是 3.1/3.2 那套：H.264 解析器读 slice header 的
   `slice_type` 查表得到 `pict_type`，见到 IDR 或 recovery point SEI 就置
-  `key_frame`（[`libavcodec/h264_parser.c:364`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364) 附近）。
-  另外"是否关键帧"还有个更便宜的来源：demuxer 按容器关键帧索引直接
-  打在包上的 `AV_PKT_FLAG_KEY` 标记
-  （[`libavformat/mov.c:11808`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808)），
-  读 `pkt->flags` 即可，连解析都不用。
+  `key_frame`（[`libavcodec/h264_parser.c:364`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364) 附近）；
+  `AV_PKT_FLAG_KEY` 则来自容器索引
+  （[`libavformat/mov.c:11808`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808)）。
 - **解码层——解完才知道，只能事后用**。解码输出的每个 `AVFrame` 自带
   这两个信息，直接读：
 

@@ -674,14 +674,27 @@ footer .links { margin-bottom: 8px; }
         得退回 NAL 头解析兜底；</li>
       <li><strong>解析层——轻量解析，不解码</strong>：<code>av_parser_parse2()</code> 是 FFmpeg
         的码流解析器，把压缩包喂给它，它只解析各级头部（NAL 头、slice header）、完全不碰像素。
-        调用返回后直接读解析器上下文（<code>AVCodecParserContext</code>，即
-        <code>av_parser_init()</code> 返回的对象）的两个字段：<code>parser-&gt;pict_type</code>
-        （帧类型 <code>AV_PICTURE_TYPE_I / P / B</code>，解析 slice_type 查表得来）和
-        <code>parser-&gt;key_frame</code>（1＝关键帧：IDR 或 recovery point SEI）。
-        「是否关键帧」还有个更便宜的来源——demuxer 按容器关键帧索引直接打在包上的
+        基于 demuxer 吐出的 <code>AVPacket</code>（下面的 <code>pkt</code>）判定帧类型和关键帧，
+        完整写法：
+        <div class="codeblock" style="margin:10px 0 6px">
+          <button class="copy-btn" data-copy="cp-pkt-judge">复制</button>
+<pre id="cp-pkt-judge"><code><span class="cm">/* ① 是否关键帧：最便宜——demuxer 按容器关键帧索引已打好标记，读 flags 即可 */</span>
+<span class="kw">int</span> is_key = !!(pkt-&gt;flags &amp; AV_PKT_FLAG_KEY);
+
+<span class="cm">/* ② 帧类型 I/B/P：把 pkt 过一遍轻量解析器（只读头部，不解码像素）。
+      avctx 是按流参数填好的 AVCodecContext，无需打开解码器 */</span>
+AVCodecParserContext *parser = av_parser_init(avctx-&gt;codec_id);
+<span class="kw">uint8_t</span> *out; <span class="kw">int</span> out_size;                   <span class="cm">/* 组帧输出，这里用不到 */</span>
+av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
+                 pkt-&gt;data, pkt-&gt;size, pkt-&gt;pts, pkt-&gt;dts, -1);
+
+<span class="kw">enum</span> AVPictureType type = parser-&gt;pict_type;  <span class="cm">/* AV_PICTURE_TYPE_I / P / B */</span>
+<span class="kw">int</span> key_by_parser       = parser-&gt;key_frame;  <span class="cm">/* 1 = 关键帧（IDR / recovery point SEI） */</span></code></pre>
+        </div>
+        原理见 3.1/3.2：解析器读 slice header 的 <code>slice_type</code> 查表得到帧类型，
+        见到 IDR 或 recovery point SEI 就置 <code>key_frame</code>；
         <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808"
-        target="_blank" rel="noopener"><code>AV_PKT_FLAG_KEY</code></a> 标记，
-        读 <code>pkt-&gt;flags</code> 即可，连解析都不用；</li>
+        target="_blank" rel="noopener"><code>AV_PKT_FLAG_KEY</code></a> 则来自容器关键帧索引；</li>
       <li><strong>解码层——解完才知道，只能事后用</strong>：解码输出的每个 <code>AVFrame</code>
         自带这两个信息，直接读 <code>frame-&gt;pict_type</code>（I/P/B）和
         <code>frame-&gt;flags &amp; AV_FRAME_FLAG_KEY</code>（非 0＝关键帧）。
