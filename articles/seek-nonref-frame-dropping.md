@@ -390,13 +390,14 @@ static int packet_droppable(const uint8_t *data, int size,
   `AVCodecParserContext` 的两个字段上：
 
   ```c
-  AVCodecParserContext *pc = av_parser_init(AV_CODEC_ID_H264);
+  /* parser：解析器上下文（AVCodecParserContext），解析结果挂在它身上 */
+  AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_H264);
   uint8_t *out; int out_size;              /* 组帧输出，这里用不到 */
-  av_parser_parse2(pc, avctx, &out, &out_size,
+  av_parser_parse2(parser, avctx, &out, &out_size,   /* pkt 是压缩数据包 */
                    pkt->data, pkt->size, pkt->pts, pkt->dts, -1);
 
-  pc->pict_type;  /* 帧类型：AV_PICTURE_TYPE_I / P / B */
-  pc->key_frame;  /* 1 = 关键帧（IDR，或带 recovery point SEI，见 3.1） */
+  parser->pict_type;  /* 帧类型：AV_PICTURE_TYPE_I / P / B */
+  parser->key_frame;  /* 1 = 关键帧（IDR，或带 recovery point SEI，见 3.1） */
   ```
 
   内部原理就是 3.1/3.2 那套：H.264 解析器读 slice header 的

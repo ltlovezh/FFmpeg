@@ -674,9 +674,10 @@ footer .links { margin-bottom: 8px; }
         得退回 NAL 头解析兜底；</li>
       <li><strong>解析层——轻量解析，不解码</strong>：<code>av_parser_parse2()</code> 是 FFmpeg
         的码流解析器，把压缩包喂给它，它只解析各级头部（NAL 头、slice header）、完全不碰像素。
-        调用返回后直接读解析器上下文的两个字段：<code>pc-&gt;pict_type</code>
+        调用返回后直接读解析器上下文（<code>AVCodecParserContext</code>，即
+        <code>av_parser_init()</code> 返回的对象）的两个字段：<code>parser-&gt;pict_type</code>
         （帧类型 <code>AV_PICTURE_TYPE_I / P / B</code>，解析 slice_type 查表得来）和
-        <code>pc-&gt;key_frame</code>（1＝关键帧：IDR 或 recovery point SEI）。
+        <code>parser-&gt;key_frame</code>（1＝关键帧：IDR 或 recovery point SEI）。
         「是否关键帧」还有个更便宜的来源——demuxer 按容器关键帧索引直接打在包上的
         <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808"
         target="_blank" rel="noopener"><code>AV_PKT_FLAG_KEY</code></a> 标记，
