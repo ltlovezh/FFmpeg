@@ -420,8 +420,11 @@ footer .links { margin-bottom: 8px; }
     ≤T 的关键帧，再把中间所有帧解码一遍「追」到 T——这段追帧过程（行话叫 preroll）才是 Seek 耗时的大头。</p>
   <p>成本可以粗略写成：<code>seek_latency ≈ 定位/IO + N_preroll × t_decode + 首帧渲染</code>
     （N_preroll＝追帧区间要解码的帧数，t_decode＝单帧解码耗时）。
-    点播场景相邻两个关键帧的间隔（GOP，画面组）普遍 2~10 秒（几十到几百帧），优化只有两个方向：
-    <strong>少解码</strong>（丢帧，本文主题）和<strong>快解码</strong>（让解码器远快于播放速度地跑，第 5 章）。</p>
+    点播场景相邻两个关键帧的间隔（GOP，画面组）普遍 2~10 秒、几十到几百帧，优化只有两个方向：</p>
+  <ul>
+    <li><strong>少解码</strong>——把追帧区间里没人依赖的帧直接丢掉，<strong>本文主题</strong>；</li>
+    <li><strong>快解码</strong>——让解码器远快于播放速度地跑（第 5 章顺带覆盖）。</li>
+  </ul>
 
   <div class="module" id="m1">
     <div class="m-head">
@@ -468,26 +471,40 @@ footer .links { margin-bottom: 8px; }
 <section class="chapter" id="ch2">
   <div class="chap-head"><span class="no">02</span><h2>哪些帧可以丢：参考性才是唯一判据</h2></div>
   <p class="lead">视频压缩靠「帧间预测」：一帧只记录它与某些已解码帧的差异，解码时拿那些帧当底子还原。
-    被当作底子的就是<strong>参考帧</strong>，「谁参考谁」连成的依赖链就是<strong>参考链</strong>。
-    解码器内部用一小块缓存 DPB（Decoded Picture Buffer，解码图像缓存）存放还会被引用的帧，
-    不被引用的帧输出即弃。<strong>丢掉非参考帧，解码器甚至不知道它存在过</strong>；
-    丢掉参考帧，错误会沿参考链扩散成花屏。</p>
-  <p>很多资料把「丢非参考帧」等同于「丢 B 帧」，这是错的。I/B/P 和参考性是两个互相独立的属性：
-    <strong>I/B/P 回答「它需要谁」</strong>——当前帧怎样参考别人（I 不参考任何帧、P 用一份候选参考帧
-    清单「参考列表」、B 用两份），记录在 slice header 的 <code>slice_type</code> 字段里
-    （slice 是一帧内部的分条，slice header 是每条开头的说明信息）；
-    <strong>参考性回答「以后谁需要它」</strong>——当前帧是否会被别人参考（参考帧留在 DPB
-    给后来的帧当底子，非参考帧输出即释放），写在 NAL 头里。一个说的是输入，一个说的是输出，
-    互相推导不出来——组合出的六种情况在真实码流里都可能存在：</p>
+    被当作底子的就是<strong>参考帧</strong>，「谁参考谁」连成的依赖链就是<strong>参考链</strong>；
+    解码器内部用一小块缓存 <strong>DPB</strong>（Decoded Picture Buffer，解码图像缓存）
+    存放还会被引用的帧，不被引用的帧输出即弃。于是丢帧的后果泾渭分明：</p>
+  <ul>
+    <li><strong style="color:var(--ref)">丢非参考帧</strong>——没有任何帧依赖它，
+      解码器甚至不知道它存在过，<strong>零代价</strong>；</li>
+    <li><strong style="color:var(--bad)">丢参考帧</strong>——依赖它的帧解码出错，
+      错误沿参考链逐帧扩散成<strong>花屏</strong>。</li>
+  </ul>
+  <p>很多资料把「丢非参考帧」等同于「丢 B 帧」，这是错的。I/B/P 和参考性是
+    <strong>两个互相独立的属性</strong>：</p>
+  <ul>
+    <li><strong>I/B/P 回答「它需要谁」</strong>——当前帧怎样参考别人：I 不参考任何帧；
+      P 用一份候选参考帧清单（参考列表）；B 用两份。记录在 slice header 的
+      <code>slice_type</code> 字段里（slice 是一帧内部的分条，slice header 是每条开头的说明信息）；</li>
+    <li><strong>参考性回答「以后谁需要它」</strong>——当前帧是否会被别人参考：参考帧留在 DPB
+      给后来的帧当底子；非参考帧输出即释放。写在 <strong>NAL 头</strong>里。</li>
+  </ul>
+  <p>一个说的是<strong>输入</strong>，一个说的是<strong>输出</strong>，互相推导不出来——
+    组合出的六种情况在真实码流里都可能存在：</p>
   <p><strong>B-pyramid：为什么 B 帧也能成为参考帧。</strong>传统 B 帧只参考两侧的 I/P 锚点，
-    自己是不被引用的「叶子」。B-pyramid 把连续 B 帧组织成层级：先让中间的 B2 参考 I0/P4
-    并保留在 DPB 里，再让两侧的 B1/B3 参考它——B2 仍是 B 帧（用两个参考列表预测自己），
-    却同时成了别的 B 帧的参考。本文把 I0/P4 所在锚点称为<strong>第 0 层（金字塔底部）</strong>、
-    B2 称为<strong>第 1 层（中间参考层）</strong>、B1/B3 称为<strong>第 2 层（上层叶子）</strong>；
-    层号只是讲解用的简化编号，不等同于 HEVC 的 <code>TemporalId</code>。叶子 B 用上距离更近的
-    参考帧，压缩效率更高；代价是部分 B 变成参考帧，不能再随意丢弃。主流编码器
-    x264/x265（最常用的 H.264/H.265 开源编码器）默认开启 b-pyramid。
-    在下面的 3D 场景里切到<strong>「金字塔分层」</strong>排列，可以直观看到这个层级结构。</p>
+    自己是不被引用的「叶子」；B-pyramid 把连续 B 帧组织成层级
+    （主流编码器 x264/x265——最常用的 H.264/H.265 开源编码器——默认开启）：</p>
+  <ul>
+    <li>先让中间的 <b>B2</b> 参考 I0/P4，并把解码后的 B2 保留在 DPB 里；</li>
+    <li>再让两侧的 <b>B1/B3</b> 参考 B2——B2 仍是 B 帧（用两个参考列表预测自己），
+      却同时成了别的 B 帧的<strong>参考</strong>；</li>
+    <li>本文称 I0/P4 为<strong>第 0 层（金字塔底部）</strong>、B2 为<strong>第 1 层（中间参考层）</strong>、
+      B1/B3 为<strong>第 2 层（上层叶子）</strong>——层号只是讲解编号，不等同于 HEVC 的
+      <code>TemporalId</code>；</li>
+    <li>收益：叶子 B 用上距离更近的参考帧，压缩效率更高；代价：部分 B 变成参考帧，
+      <strong>不能再随意丢弃</strong>。</li>
+  </ul>
+  <p>在下面的 3D 场景里切到<strong>「金字塔分层」</strong>排列，可以直观看到这个层级结构。</p>
 
   <div class="module" id="m2">
     <div class="m-head">
@@ -537,10 +554,13 @@ footer .links { margin-bottom: 8px; }
 <section class="chapter" id="ch3">
   <div class="chap-head"><span class="no">03</span><h2>如何判定：NAL 头 1~2 字节就够了</h2></div>
   <p class="lead">背景：H.264/H.265 码流由一个个 <strong>NAL 单元</strong>（统一格式的「数据包裹」）组成，
-    每个包裹开头 1~2 字节的 <strong>NAL 头</strong>标明里面装的是什么；真正装图像数据的叫
-    <strong>VCL NAL</strong>，其余（SPS/PPS 参数集、SEI 附加信息）是非 VCL。两个标准都把参考性直接写在了
-    NAL 头里——判定<strong>不需要解码，甚至不需要解析 slice header</strong>。
-    这正是「解码前丢帧」可行的根本原因。</p>
+    每个包裹开头 1~2 字节的 <strong>NAL 头</strong>标明里面装的是什么：</p>
+  <ul>
+    <li><strong>VCL NAL</strong>（Video Coding Layer）——真正装图像数据的包裹；</li>
+    <li>非 VCL NAL——SPS/PPS（参数集，记录分辨率等全局参数）、SEI（附加信息）等。</li>
+  </ul>
+  <p>两个标准都把参考性直接写在了 NAL 头里——判定<strong>不需要解码，甚至不需要解析
+    slice header</strong>，这正是「解码前丢帧」可行的根本原因：</p>
   <ul>
     <li><strong>H.264</strong>：看 1 字节 NAL 头里的 <code>nal_ref_idc</code>（2 bit）。
       <code>== 0</code> → 非参考帧。标准约束同帧所有 slice 一致，且 IDR/SPS/PPS 必须非 0，
@@ -583,12 +603,14 @@ footer .links { margin-bottom: 8px; }
           <tr data-n="10"><td>VCL_N10/12/14（保留）</td><td>10/12/14</td><td>VCL_R11/13/15（保留）</td><td>11/13/15</td></tr>
         </table>
       </div>
-      <div class="note warn"><b>两个 HEVC 特有细节</b>：① <code>_N</code> 严格含义是「同一时域子层内非参考」
-        ——时域分层是把帧分成若干「帧率层」（TemporalId 即 tid，就是层号；只解低层得到低帧率版本）；
-        绝大多数点播流只有一个时域层（tid 恒 0），此时 <code>_N</code> 就是真非参考，FFmpeg 软解也直接丢；
-        多时域层流严格只保证最高层 <code>_N</code> 安全。② Seek 落到 <b>CRA(21)</b>（open-GOP 关键帧，
-        允许其后的帧引用它之前的内容）上时，紧随的 <b>RASL(8/9)</b> 帧引用了 CRA 之前、此刻并没有解码的帧，
-        <b>必须丢弃</b>——这是正确性要求，不丢会花屏。</div>
+      <div class="note warn"><b>两个 HEVC 特有细节</b>：<br>
+        ① <code>_N</code> 严格含义是「<b>同一时域子层内</b>非参考」——时域分层是把帧分成若干「帧率层」
+        （TemporalId 即 tid，就是层号；只解低层得到低帧率版本）。绝大多数点播流只有一个时域层
+        （tid 恒 0），此时 <code>_N</code> 就是真非参考，FFmpeg 软解也直接丢；
+        多时域层流严格只保证最高层 <code>_N</code> 安全。<br>
+        ② Seek 落到 <b>CRA(21)</b>（open-GOP 关键帧，允许其后的帧引用它之前的内容）上时，
+        紧随的 <b>RASL(8/9)</b> 帧引用了 CRA 之前、此刻并没有解码的帧，<b>必须丢弃</b>——
+        这是正确性要求，不丢会花屏。</div>
     </div>
 
     <h3 style="margin-top:24px">整包判定：~30 行判断一个 AVPacket 能否整包丢弃</h3>
@@ -621,10 +643,13 @@ footer .links { margin-bottom: 8px; }
     <span class="kw">return</span> 0;
 }</code></pre>
     </div>
-    <p>不想碰码流时还有三个现成判定层：<strong>容器层</strong>
-      <code>AV_PKT_FLAG_DISPOSABLE</code>（MP4 <code>sdtp</code> box → libavformat/mov.c:11692，零成本但不保证存在）、
-      <strong>解析层</strong> <code>av_parser_parse2()</code>（不解码填出 pict_type/key_frame）、
-      <strong>解码层</strong> <code>AVFrame.pict_type</code>（只能用于解码后丢帧）。</p>
+    <p>不想碰码流时还有三个现成判定层：</p>
+    <ul>
+      <li><strong>容器层</strong>：<code>AV_PKT_FLAG_DISPOSABLE</code>
+        （MP4 <code>sdtp</code> box → libavformat/mov.c:11692）——零成本，但封装器不写就没有；</li>
+      <li><strong>解析层</strong>：<code>av_parser_parse2()</code>——不解码，填出 pict_type / key_frame；</li>
+      <li><strong>解码层</strong>：<code>AVFrame.pict_type</code>——已经解码了，只能用于「解码后丢帧」。</li>
+    </ul>
   </div>
 </section>
 
@@ -690,11 +715,15 @@ footer .links { margin-bottom: 8px; }
 <!-- ==================== CH 5 ==================== -->
 <section class="chapter" id="ch5">
   <div class="chap-head"><span class="no">05</span><h2>硬解落地：为什么 iOS 顺手、Android 要自己动手</h2></div>
-  <p class="lead">FFmpeg 接入硬解有两种模型，<code>skip_frame</code> 行为截然不同：
-    <strong>hwaccel 模型</strong>（硬件加速——FFmpeg 照常拆包、解析 NAL，只把像素级计算交给硬件；
-    如 VideoToolbox/VAAPI/NVDEC）里丢弃决策在软件层完成，被丢的 NAL 根本不会提交给硬件；
-    <strong>wrapper 模型</strong>（包装——FFmpeg 只当搬运工，把整包数据原样转交系统解码器；
-    如 MediaCodec）整包透传给系统黑盒，<code>skip_frame</code> 完全无效——丢帧必须发生在喂入之前。</p>
+  <p class="lead">FFmpeg 接入硬解有两种模型，<code>skip_frame</code> 行为截然不同：</p>
+  <ul>
+    <li><strong>hwaccel 模型</strong>（硬件加速——FFmpeg 照常拆包、解析 NAL，只把像素级计算交给硬件；
+      如 iOS VideoToolbox、VAAPI、NVDEC）：丢弃决策在软件层完成，被丢的 NAL
+      <strong>根本不会提交给硬件</strong>，<code>skip_frame</code> ✅ 生效；</li>
+    <li><strong>wrapper 模型</strong>（包装——FFmpeg 只当搬运工，把整包数据原样转交系统解码器；
+      如 Android MediaCodec）：整包透传给系统黑盒，<code>skip_frame</code> ❌ 完全无效——
+      丢帧必须发生在<strong>喂入之前</strong>。</li>
+  </ul>
 
   <div class="module" id="m5">
     <div class="m-head">
@@ -863,15 +892,24 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
 <section class="chapter" id="ch8">
   <div class="chap-head"><span class="no">08</span><h2>总结与源码索引</h2></div>
   <h3>Q1 · 丢非参考帧，解码器支持吗？</h3>
-  <p>FFmpeg 软解和 hwaccel 模型原生支持（<code>skip_frame = AVDISCARD_NONREF</code>，
-    丢弃发生在 NAL 解析层，硬件无感）；MediaCodec 这类 wrapper 不支持——但也不需要：
-    非参考帧的定义保证了「喂入前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节。
-    解码前丢不掉的参考帧，用「解码不输出」（<code>DECODE_ONLY</code> /
-    <code>DoNotOutputFrame</code>）和「输出不渲染」（<code>releaseOutputBuffer(false)</code>）两层兜底。</p>
+  <ul>
+    <li><strong>FFmpeg 软解 / hwaccel 模型</strong>：原生支持——
+      <code>skip_frame = AVDISCARD_NONREF</code>，丢弃发生在 NAL 解析层，硬件无感；</li>
+    <li><strong>MediaCodec 这类 wrapper</strong>：不支持——但也不需要：非参考帧的定义保证了
+      「喂入前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节；</li>
+    <li><strong>解码前丢不掉的参考帧</strong>：用「解码不输出」（<code>DECODE_ONLY</code> /
+      <code>DoNotOutputFrame</code>）和「输出不渲染」（<code>releaseOutputBuffer(false)</code>）
+      两层兜底快速追帧。</li>
+  </ul>
   <h3>Q2 · 参考帧与 I/B/P 的关系？</h3>
-  <p>互相独立的两个属性：<code>slice_type</code> 决定 I/B/P（怎么预测自己），NAL 头决定参考性（是否被引用）。
-    H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型的 <code>_N</code> 后缀（偶数）；
-    B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧。<strong>安全丢帧的唯一判据是参考性，不是帧类型。</strong></p>
+  <ul>
+    <li><strong>互相独立的两个属性</strong>：<code>slice_type</code> 决定 I/B/P（怎么预测自己），
+      NAL 头决定参考性（是否被引用）；</li>
+    <li><strong>判定</strong>：H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型的
+      <code>_N</code> 后缀（偶数）；</li>
+    <li>B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧——
+      <strong>安全丢帧的唯一判据是参考性，不是帧类型</strong>。</li>
+  </ul>
 
   <h3>FFmpeg 源码索引</h3>
   <div class="tscroll">
