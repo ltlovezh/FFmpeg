@@ -691,7 +691,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
 <span class="kw">enum</span> AVPictureType type = parser-&gt;pict_type;  <span class="cm">/* AV_PICTURE_TYPE_I / P / B */</span>
 <span class="kw">int</span> key_by_parser       = parser-&gt;key_frame;  <span class="cm">/* 1 = 关键帧（IDR / recovery point SEI） */</span></code></pre>
         </div>
-        原理见 3.1/3.2：解析器读 slice header 的 <code>slice_type</code> 查表得到帧类型，
+        解析器读 slice header 的 <code>slice_type</code> 查表得到帧类型，
         见到 IDR 或 recovery point SEI 就置 <code>key_frame</code>；
         <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11808"
         target="_blank" rel="noopener"><code>AV_PKT_FLAG_KEY</code></a> 则来自容器关键帧索引；</li>

@@ -406,7 +406,7 @@ static int packet_droppable(const uint8_t *data, int size,
                                                    point SEI，见 3.1） */
   ```
 
-  内部原理就是 3.1/3.2 那套：H.264 解析器读 slice header 的
+  H.264 解析器读 slice header 的
   `slice_type` 查表得到 `pict_type`，见到 IDR 或 recovery point SEI 就置
   `key_frame`（[`libavcodec/h264_parser.c:364`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L364) 附近）；
   `AV_PKT_FLAG_KEY` 则来自容器索引
