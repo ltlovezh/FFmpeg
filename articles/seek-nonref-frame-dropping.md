@@ -371,11 +371,23 @@ static int packet_droppable(const uint8_t *data, int size,
 
 ### 3.4 不想碰码流：三个现成的判定层
 
-| 层级 | 手段 | 成本 | 说明 |
-| --- | --- | --- | --- |
-| 容器层 | `AVPacket.flags & AV_PKT_FLAG_DISPOSABLE` | 零 | MP4 `sdtp` box 的 `sample_is_depended_on == 2` → demuxer 直接打 flag（`libavformat/mov.c:11692`）；x265 编码输出也带（`libavcodec/libx265.c:932`）。**依赖封装器写了 `sdtp`，拿不到就退回 3.3** |
-| 解析层 | `av_parser_parse2()` | 低 | 不解码，填出 `pict_type` / `key_frame` |
-| 解码层 | `AVFrame.pict_type`、`AV_FRAME_FLAG_KEY` | 已解码 | 只能用于"解码后丢帧"的场景 |
+不想自己写 3.3 那样的 NAL 解析？FFmpeg 在三个不同阶段已经把"这一帧是
+什么"的答案算好了，按付出的成本从低到高：
+
+- **容器层——读包上的现成标记，零成本**。MP4 有个可选的 `sdtp` box
+  （sample dependency table：封装时逐帧记录"是否被别的帧依赖"的元数据
+  表）。demuxer 解析到 `sample_is_depended_on == 2`（明确没人依赖），就
+  直接在数据包上打 `AV_PKT_FLAG_DISPOSABLE` 标记
+  （`libavformat/mov.c:11692`；用 x265 编码时输出也自带，
+  `libavcodec/libx265.c:932`）。判定只是查一个 bit：
+  `pkt->flags & AV_PKT_FLAG_DISPOSABLE`。
+  **缺点：封装工具没写 `sdtp` 就拿不到，此时退回 3.3 的 NAL 头解析。**
+- **解析层——轻量解析，不解码**。`av_parser_parse2()` 是 FFmpeg 的
+  码流解析器：只读各级头部信息、完全不解码像素，就能填出帧类型
+  `pict_type`（I/B/P）和是否关键帧 `key_frame`，成本很低。
+- **解码层——解完才知道，只能事后用**。解码输出的 `AVFrame` 上带
+  `pict_type` 和 `AV_FRAME_FLAG_KEY`。此时解码成本已经花掉，只能服务
+  "解码后丢帧"的场景（比如作用点④的不渲染判定）。
 
 ---
 

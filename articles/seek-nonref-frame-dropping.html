@@ -661,12 +661,20 @@ footer .links { margin-bottom: 8px; }
     <span class="kw">return</span> 0;
 }</code></pre>
     </div>
-    <p>不想碰码流时还有三个现成判定层：</p>
+    <p>不想自己写上面那样的 NAL 解析？FFmpeg 在三个阶段已经把「这一帧是什么」的答案算好了，
+      按付出的成本从低到高：</p>
     <ul>
-      <li><strong>容器层</strong>：<code>AV_PKT_FLAG_DISPOSABLE</code>
-        （MP4 <code>sdtp</code> box → libavformat/mov.c:11692）——零成本，但封装器不写就没有；</li>
-      <li><strong>解析层</strong>：<code>av_parser_parse2()</code>——不解码，填出 pict_type / key_frame；</li>
-      <li><strong>解码层</strong>：<code>AVFrame.pict_type</code>——已经解码了，只能用于「解码后丢帧」。</li>
+      <li><strong>容器层——读包上的现成标记，零成本</strong>：MP4 有个可选的 <code>sdtp</code> box
+        （封装时逐帧记录「是否被别的帧依赖」的元数据表），demuxer 解析后直接在数据包上打
+        <code>AV_PKT_FLAG_DISPOSABLE</code> 标记（libavformat/mov.c:11692），
+        判定只是查一个 bit。缺点：封装工具没写 <code>sdtp</code> 就拿不到，
+        得退回 NAL 头解析兜底；</li>
+      <li><strong>解析层——轻量解析，不解码</strong>：<code>av_parser_parse2()</code> 是 FFmpeg
+        的码流解析器，只读各级头部信息、完全不碰像素，就能填出帧类型 <code>pict_type</code>（I/B/P）
+        和是否关键帧 <code>key_frame</code>，成本很低；</li>
+      <li><strong>解码层——解完才知道，只能事后用</strong>：解码输出的 <code>AVFrame</code> 上带
+        <code>pict_type</code>，此时解码成本已经花掉，只能服务「解码后丢帧」
+        （比如作用点④的不渲染判定）。</li>
     </ul>
   </div>
 </section>
