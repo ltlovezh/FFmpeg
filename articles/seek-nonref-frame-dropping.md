@@ -385,7 +385,7 @@ static int packet_droppable(const uint8_t *data, int size,
   `pkt->flags & AV_PKT_FLAG_DISPOSABLE`。
   **缺点：封装工具没写 `sdtp` 就拿不到，此时退回 3.3 的 NAL 头解析。**
 - **解析层——轻量解析，不解码**。`av_parser_parse2()` 是 FFmpeg 的
-  码流解析器：把压缩包喂给它，它只解析各级头部（NAL 头、slice
+  码流解析器：把压缩视频数据（`AVPacket`）喂给它，它只解析各级头部（NAL 头、slice
   header……）、完全不碰像素。基于 demuxer 吐出的 `AVPacket`（下面的
   `pkt`）判定帧类型和关键帧，完整写法：
 

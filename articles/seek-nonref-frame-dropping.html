@@ -673,7 +673,7 @@ footer .links { margin-bottom: 8px; }
         判定只是查一个 bit。缺点：封装工具没写 <code>sdtp</code> 就拿不到，
         得退回 NAL 头解析兜底；</li>
       <li><strong>解析层——轻量解析，不解码</strong>：<code>av_parser_parse2()</code> 是 FFmpeg
-        的码流解析器，把压缩包喂给它，它只解析各级头部（NAL 头、slice header）、完全不碰像素。
+        的码流解析器，把压缩视频数据（<code>AVPacket</code>）喂给它，它只解析各级头部（NAL 头、slice header）、完全不碰像素。
         基于 demuxer 吐出的 <code>AVPacket</code>（下面的 <code>pkt</code>）判定帧类型和关键帧，
         完整写法：
         <div class="codeblock" style="margin:10px 0 6px">
