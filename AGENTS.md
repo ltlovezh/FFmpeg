@@ -110,3 +110,6 @@ header to every new source file using a nearby file as the template.
 - 生成/同步 HTML 用 `/article-viz` skill（`~/.claude/skills/article-viz/`），
   其中沉淀了页面架构、浅色主题设计 token、Three.js 降级模式、交互模块
   选型菜单与验证清单；md 与 html 放同一个 commit。
+- **行文通俗易懂**：假设读者没有音视频背景；专业名词首次出现必须紧跟
+  一句大白话解释（括号注即可）；多用例子和具体数字，少用术语堆砌与
+  符号化表达（如大 O 记号）。md 与 HTML 文案同样适用。
