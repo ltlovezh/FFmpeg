@@ -623,9 +623,12 @@ footer .links { margin-bottom: 8px; }
         （TemporalId 即 tid，就是层号；只解低层得到低帧率版本）。绝大多数点播流只有一个时域层
         （tid 恒 0），此时 <code>_N</code> 就是真非参考，FFmpeg 软解也直接丢；
         多时域层流严格只保证最高层 <code>_N</code> 安全。<br>
-        ② Seek 落到 <b>CRA(21)</b>（open-GOP 关键帧，允许其后的帧引用它之前的内容）上时，
-        紧随的 <b>RASL(8/9)</b> 帧引用了 CRA 之前、此刻并没有解码的帧，<b>必须丢弃</b>——
-        这是正确性要求，不丢会花屏。</div>
+        ② <b>CRA(21)</b> 是 open-GOP 关键帧，它后面紧跟一批 <b>RASL(8/9)</b> 帧：
+        显示在 CRA <b>之前</b>、解码在 CRA <b>之后</b>，且参考了<b>上一个 GOP</b> 的帧
+        （跨界借参考帧，省码率）。比如显示顺序 <code>… P29 │ B30 B31 CRA32 …</code>
+        中，B30/B31 就是 RASL，参考了 P29。<b>连续播放</b>：P29 刚解完还在，B30/B31 正常解；
+        <b>Seek 跳到 CRA32</b>：P29 根本没解码，B30/B31 的参考不存在、解不出来
+        → <b>必须丢弃</b>，画面从 CRA32 开始——不丢会花屏，这是正确性要求。</div>
     </div>
 
     <h3 style="margin-top:24px">整包判定：~30 行判断一个 AVPacket 能否整包丢弃</h3>
@@ -871,8 +874,9 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
     </div></div>
     <div class="flip"><div class="inner">
       <div class="face front"><div class="no">PITFALL 02</div><div class="t">HEVC open-GOP：CRA + RASL</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back">Seek 到 CRA(21) 后，其后的 RASL 帧（8/9）引用了 CRA 之前、此刻并没有解码的帧，
-        <b>必须丢弃</b>——这是正确性问题，不丢会花屏。闭 GOP（IDR）流无此问题。</div>
+      <div class="face back">open-GOP 里 CRA(21) 后面跟着一批 RASL 帧（8/9）：显示在 CRA 之前、
+        参考上一个 GOP 的帧。连续播放没问题；<b>Seek 跳到 CRA</b> 时上一个 GOP 没解码，
+        RASL 的参考不存在、解不出来，<b>必须丢弃</b>——不丢会花屏。闭 GOP（IDR）流无此问题。</div>
     </div></div>
     <div class="flip"><div class="inner">
       <div class="face front"><div class="no">PITFALL 03</div><div class="t">HEVC 时域分层的 _N 语义</div><div class="cue">点击翻面 ↻</div></div>
@@ -1403,7 +1407,7 @@ function visLoop(el, tick) {
     { n: 'feed', l: 6, d: '<b>P4</b>（参考 P，第 0 层锚点）：显示顺序在目标 B3 <b>之后</b>，但 B2/B3 都依赖它——解码顺序在前，必须先解。', mark: [['P4', 'decoded', '解码✓']] },
     { n: 'feed', l: 6, d: '<b>B2</b>（<b>参考 B</b>，金字塔第 1 层·中间参考层）：不能丢！B1/B3 引用它。「丢 B 帧」策略在这里翻车。', mark: [['B2', 'decoded', '解码✓']] },
     { n: 'drop', l: 4, d: '<b>B1</b>（非参考，pts&lt;target）：<b>① 整包丢弃</b>，解码器根本不知道它存在过。H.264 看 ref_idc==0，H.265 看 _N。', mark: [['B1', 'dropped', '丢包①']] },
-    { n: 'drop', l: 4, warn: true, d: '<b>⚠️ HEVC 分支</b>：若关键帧是 CRA（open-GOP），其后的 RASL 帧引用了 seek 前的帧，<b>必须</b>在①丢弃——这是正确性要求，不是优化。' },
+    { n: 'drop', l: 4, warn: true, d: '<b>⚠️ HEVC 分支</b>：若关键帧是 CRA（open-GOP），其后的 RASL 帧参考了上一个 GOP、此时并没有解码的帧，解不出来，<b>必须</b>在①丢弃——这是正确性要求，不是优化。' },
     { n: 'feed', l: 6, d: '<b>B3 = 目标帧</b>：它虽是非参考帧，但要显示它就必须解码它——不带 DECODE_ONLY，正常解码输出。', mark: [['B3', 'decoded', '解码✓']] },
     { n: 'norender', l: 9, d: '<b>输出侧</b>：I0/B2 输出帧 pts+dur ≤ target → <b>④ 不渲染丢弃</b>（硬解用 releaseOutputBuffer(false) / 不回调，省纹理上传）；P4 的 pts 在目标之后，它的输出留给后续正常播放。', mark: [['I0', 'norender', '不渲染④'], ['B2', 'norender', '不渲染④']] },
     { n: 'done', l: 13, d: '<b>B3 输出</b>：pts 覆盖 target → 恢复 skip_frame=DEFAULT，<b>首帧上屏，Seek 完成</b> 🎉。本次解码 4 帧、①丢弃 1 帧；P4 已在 DPB，接下来的播放无缝继续。', mark: [['B3', 'shown', '上屏🎉']] },

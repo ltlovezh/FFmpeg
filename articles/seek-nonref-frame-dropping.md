@@ -299,14 +299,30 @@ IRAP（Intra Random Access Point，帧内随机访问点）是 H.265 对各种
 | IDR_W_RADL / IDR_N_LP | 19/20 | 闭 GOP 关键帧（其后的帧绝不引用它之前的内容） |
 | **CRA_NUT** | 21 | **open-GOP 关键帧**（允许跨界引用，压缩率更高） |
 
-所谓 open-GOP（开放式 GOP），指 GOP 之间存在跨界引用。CRA 关键帧后面
-跟着一批"前导帧"（leading picture：显示时间在 CRA 之前、解码顺序在
-CRA 之后的帧），其中 **RASL 帧（Random Access Skipped Leading，类型
-8/9）引用了 CRA 之前的帧**。连续播放时那些帧都在，一切正常；但 Seek
-恰好落到 CRA 上时，CRA 之前的帧没有解码，RASL 帧无从解起，**必须丢弃**
-（另一类前导帧 RADL——Random Access Decodable Leading，类型 6/7——
-不依赖 CRA 之前的内容，可正常解码）。这是 Seek 场景里另一类"必丢帧"，
-与性能优化无关，属于正确性要求。
+所谓 open-GOP（开放式 GOP），指 GOP 之间存在跨界引用：CRA 后面紧跟着
+一批"前导帧"（leading picture）——显示时间在 CRA **之前**、解码顺序在
+CRA **之后**的帧。用一段具体序列看会发生什么（数字为显示顺序）：
+
+```text
+显示顺序: … P28  P29 │ B30  B31  CRA32 │ B33 …
+                       ▲ B30/B31 显示在 CRA32 之前、解码在它之后，
+                         且参考了上一段的 P29
+
+解码顺序: … P28  P29 │ CRA32  B30  B31 │ B33 …
+```
+
+编码器让 B30/B31 同时参考 CRA32 和上一个 GOP 的 P29——跨界"借"参考帧
+能多省一点码率，这批帧就是 **RASL**（Random Access Skipped Leading，
+类型 8/9）。同一段码流，两种播放路径的结局完全不同：
+
+- **连续播放到这里**：P29 刚解完、还在 DPB 里，B30/B31 正常解码，
+  一切正常；
+- **Seek 直接跳到 CRA32**：P29 根本没被解码，B30/B31 需要的参考不存在，
+  解不出来——**必须丢弃**，画面从 CRA32 开始显示。
+
+另一类前导帧 **RADL**（Random Access Decodable Leading，类型 6/7）只参考
+CRA32 本身、不依赖更早的内容，Seek 后仍可正常解码。这是 Seek 场景里
+另一类"必丢帧"，与性能优化无关，属于正确性要求。
 
 I/B/P 判定：HEVC slice header 的 `slice_type` 取值与 H.264 **不同**——
 `0 = B, 1 = P, 2 = I`（映射见 `libavcodec/hevc/parser.c:143`）。
