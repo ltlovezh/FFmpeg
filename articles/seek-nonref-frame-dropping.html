@@ -267,19 +267,34 @@ table.t td { color: #3d4a5c; }
 .byte-group { display: flex; gap: 3px; padding: 8px; background: #0d1119; border: 1px solid var(--line); border-radius: 12px; }
 .bitcell { text-align: center; cursor: pointer; user-select: none; }
 .bitcell .b {
-  width: 34px; height: 40px; display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 44px; display: flex; align-items: center; justify-content: center;
   font-family: var(--mono); font-size: 17px; font-weight: 700; border-radius: 8px;
   border: 1px solid var(--line); color: #fff; background: #161c2a; transition: all .15s;
 }
 .bitcell:hover .b { border-color: #fff5; }
-.bitcell .f { font-size: 9.5px; color: #8ea1bb; margin-top: 4px; font-family: var(--mono); }
+/* 字段全称写在字段首 bit 下方，nowrap 向右延展覆盖整个字段；
+   相邻字段用上下两行错开（.lo）避免长名字互相重叠 */
+.bitcell .f {
+  font-size: 9.5px; color: #8ea1bb; margin-top: 4px; font-family: var(--mono);
+  height: 26px; white-space: nowrap; text-align: left;
+}
+.bitcell .f.lo { padding-top: 13px; height: 13px; }
 .bitcell.f-forb .b { border-bottom: 3px solid #64748b; }
 .bitcell.f-ref  .b { border-bottom: 3px solid var(--ref); }
 .bitcell.f-type .b { border-bottom: 3px solid var(--key); }
 .bitcell.f-lay  .b { border-bottom: 3px solid #64748b; }
 .bitcell.f-tid  .b { border-bottom: 3px solid var(--warn); }
+/* 标签颜色与 bit 底边同色，暗色舞台上用亮色版本 */
+.bitcell.f-forb .f { color: #94a3b8; }
+.bitcell.f-ref  .f { color: #34d399; }
+.bitcell.f-type .f { color: #818cf8; }
+.bitcell.f-lay  .f { color: #94a3b8; }
+.bitcell.f-tid  .f { color: #fbbf24; }
 .bitcell.parity .b { box-shadow: 0 0 0 2px #f08a3e, 0 0 14px #f08a3e88; }
-@media (max-width: 700px) { .bitcell .b { width: 26px; height: 34px; font-size: 14px; } }
+@media (max-width: 700px) {
+  .bitcell .b { width: 26px; height: 34px; font-size: 14px; }
+  .bitcell .f { font-size: 8.5px; }
+}
 #m3-verdict { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-height: 34px; }
 #m3-verdict .big {
   font-size: 14px; font-weight: 700; padding: 6px 16px; border-radius: 10px; border: 1px solid;
@@ -1164,8 +1179,8 @@ function visLoop(el, tick) {
   };
   /* 位域定义：[起始bit, 长度, css类, 标签] */
   const FIELDS = {
-    h264: [[0,1,'f-forb','F'],[1,2,'f-ref','ref_idc'],[3,5,'f-type','type']],
-    h265: [[0,1,'f-forb','F'],[1,6,'f-type','type'],[7,6,'f-lay','layer'],[13,3,'f-tid','tid+1']],
+    h264: [[0,1,'f-forb','forbidden_zero_bit'],[1,2,'f-ref','nal_ref_idc'],[3,5,'f-type','nal_unit_type']],
+    h265: [[0,1,'f-forb','forbidden_zero_bit'],[1,6,'f-type','nal_unit_type'],[7,6,'f-lay','nuh_layer_id'],[13,3,'f-tid','nuh_temporal_id_plus1']],
   };
   let codec = 'h264', bytes = [0x01];
   const bitsEl = $('#m3-bits'), fieldsEl = $('#m3-fields'), verdictEl = $('#m3-verdict'),
@@ -1193,7 +1208,9 @@ function visLoop(el, tick) {
       const cell = document.createElement('div');
       cell.className = 'bitcell ' + (f ? f[2] : '');
       if (codec === 'h265' && i === 6 && type <= 15) cell.classList.add('parity'); /* type 最低位 = _N/_R */
-      cell.innerHTML = `<div class="b">${getBit(i)}</div><div class="f">${f && i === f[0] ? f[3] : '·'}</div>`;
+      const fi = f ? FIELDS[codec].indexOf(f) : 0;
+      cell.innerHTML = `<div class="b">${getBit(i)}</div>` +
+        `<div class="f${fi % 2 ? ' lo' : ''}">${f && i === f[0] ? f[3] : ''}</div>`;
       cell.addEventListener('click', () => { setBit(i, 1 - getBit(i)); presetEl.value = 'custom'; render(); });
       group.appendChild(cell);
     }
@@ -1205,7 +1222,7 @@ function visLoop(el, tick) {
     if (getBit(0)) verdict.push(big(CL.bad, '⛔ forbidden_zero_bit ≠ 0，非法码流'));
     if (codec === 'h264') {
       const ref = getField(1, 2);
-      fieldsEl.innerHTML = fld('forbidden', getBit(0)) + fld('nal_ref_idc', ref) +
+      fieldsEl.innerHTML = fld('forbidden_zero_bit', getBit(0)) + fld('nal_ref_idc', ref) +
         fld('nal_unit_type', `${type}（${H264_NAMES[type] || '其他'}）`);
       if (type === 5) {
         verdict.push(big(CL.key, '🔑 IDR 关键帧 · 必为参考'));
@@ -1221,7 +1238,8 @@ function visLoop(el, tick) {
     } else {
       const layer = getField(7, 6), tid = getField(13, 3) - 1;
       fieldsEl.innerHTML = fld('nal_unit_type', `${type}（${H265_NAMES[type] || '保留'}）`) +
-        fld('nuh_layer_id', layer) + fld('TemporalId', tid < 0 ? 'tid+1=0 非法' : tid);
+        fld('nuh_layer_id', layer) +
+        fld('nuh_temporal_id_plus1', `${getField(13, 3)}（TemporalId = ${tid < 0 ? '非法' : tid}）`);
       if (tid < 0) verdict.push(badge('bad', 'nuh_temporal_id_plus1 不得为 0'));
       if (type <= 15) {
         if ((type & 1) === 0) {
