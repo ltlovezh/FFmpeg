@@ -305,9 +305,12 @@ table.t td { color: #3d4a5c; }
 #m3-pairs td.hl { background: #e06a1315; }
 
 /* ---------- M4 ---------- */
-.m4-grid { display: grid; grid-template-columns: 1fr 250px; gap: 18px; align-items: start; }
-@media (max-width: 860px) { .m4-grid { grid-template-columns: 1fr; } }
-.m4-side { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+/* 控制区在上（横向三栏），3D 视口全宽在下 */
+.m4-grid { display: flex; flex-direction: column; gap: 14px; }
+.m4-side { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
+.m4-ctrl-grid { display: grid; grid-template-columns: auto auto 1fr; gap: 14px 44px; align-items: start; }
+@media (max-width: 860px) { .m4-ctrl-grid { grid-template-columns: 1fr; gap: 12px; } }
+.m4-ctrl-grid .cost { margin-top: 0; min-width: 220px; }
 .m4-side h4 { font-size: 12.5px; color: var(--text); margin-bottom: 10px; }
 .gate-list .switch { display: flex; margin: 9px 0; }
 .cost { margin-top: 16px; }
@@ -699,35 +702,44 @@ footer .links { margin-bottom: 8px; }
       <div class="m-tip">packet 沿传送带流动，开关闸门看它们在哪里落下</div>
     </div>
     <div class="m4-grid">
-      <div class="gl-wrap" id="m4-wrap" style="height:360px">
-        <div class="gl-hint">拖动旋转视角</div>
-        <div class="gl-fallback">⚠️ Three.js 未能加载或不支持 WebGL。<br>
-          示意：Demux → <b>①喂入前丢包</b> → 解码器（<b>②skip_frame</b>）→ <b>③解码不输出</b> → 输出 →
-          <b>④输出不渲染</b> → 上屏；①② 只拦非参考帧，③④ 拦所有追帧区间的帧。</div>
-      </div>
       <div class="m4-side">
-        <h4>丢帧闸门</h4>
-        <div class="gate-list">
-          <label class="switch"><input type="checkbox" id="m4-g1"><span class="tr"></span>① 喂入前丢包（非参考）</label>
-          <label class="switch"><input type="checkbox" id="m4-g3"><span class="tr"></span>③ 解码不输出（DECODE_ONLY）</label>
-          <label class="switch"><input type="checkbox" id="m4-g4"><span class="tr"></span>④ 输出不渲染（release false）</label>
-        </div>
-        <h4 style="margin-top:16px">skip_frame 阶梯（作用点②）</h4>
-        <div class="seg" id="m4-ladder">
-          <button data-level="0" class="on">OFF</button><button data-level="8">NONREF</button><button data-level="16">BIDIR</button><button data-level="32">NONKEY</button>
-        </div>
-        <div id="m4-ladder-badge" style="margin-top:8px"></div>
-        <div class="cost">
-          <div class="c-row"><div class="c-lbl"><span>解码成本</span><span class="cv" id="m4-cv-dec">100%</span></div>
-            <div class="c-bar"><div class="c-fill" id="m4-cf-dec" style="background:var(--key);width:100%"></div></div></div>
-          <div class="c-row"><div class="c-lbl"><span>输出成本</span><span class="cv" id="m4-cv-out">100%</span></div>
-            <div class="c-bar"><div class="c-fill" id="m4-cf-out" style="background:var(--accent);width:100%"></div></div></div>
-          <div class="c-row"><div class="c-lbl"><span>渲染成本</span><span class="cv" id="m4-cv-rnd">100%</span></div>
-            <div class="c-bar"><div class="c-fill" id="m4-cf-rnd" style="background:var(--ref);width:100%"></div></div></div>
+        <div class="m4-ctrl-grid">
+          <div>
+            <h4>丢帧闸门</h4>
+            <div class="gate-list">
+              <label class="switch"><input type="checkbox" id="m4-g1"><span class="tr"></span>① 喂入前丢包（非参考）</label>
+              <label class="switch"><input type="checkbox" id="m4-g3"><span class="tr"></span>③ 解码不输出（DECODE_ONLY）</label>
+              <label class="switch"><input type="checkbox" id="m4-g4"><span class="tr"></span>④ 输出不渲染（release false）</label>
+            </div>
+          </div>
+          <div>
+            <h4>skip_frame 阶梯（作用点②）</h4>
+            <div class="seg" id="m4-ladder">
+              <button data-level="0" class="on">OFF</button><button data-level="8">NONREF</button><button data-level="16">BIDIR</button><button data-level="32">NONKEY</button>
+            </div>
+            <div id="m4-ladder-badge" style="margin-top:8px"></div>
+          </div>
+          <div>
+            <h4>追帧区间成本</h4>
+            <div class="cost">
+              <div class="c-row"><div class="c-lbl"><span>解码成本</span><span class="cv" id="m4-cv-dec">100%</span></div>
+                <div class="c-bar"><div class="c-fill" id="m4-cf-dec" style="background:var(--key);width:100%"></div></div></div>
+              <div class="c-row"><div class="c-lbl"><span>输出成本</span><span class="cv" id="m4-cv-out">100%</span></div>
+                <div class="c-bar"><div class="c-fill" id="m4-cf-out" style="background:var(--accent);width:100%"></div></div></div>
+              <div class="c-row"><div class="c-lbl"><span>渲染成本</span><span class="cv" id="m4-cv-rnd">100%</span></div>
+                <div class="c-bar"><div class="c-fill" id="m4-cf-rnd" style="background:var(--ref);width:100%"></div></div></div>
+            </div>
+          </div>
         </div>
         <div class="note warn" id="m4-warn" style="font-size:12px"><b>参考链已破坏！</b>
           BIDIR 会误伤参考 B、NONKEY 只留关键帧——下游帧沿参考链花屏（红色方块）。
           只有 NONREF 档是无损的。</div>
+      </div>
+      <div class="gl-wrap" id="m4-wrap" style="height:430px">
+        <div class="gl-hint">拖动旋转视角</div>
+        <div class="gl-fallback">⚠️ Three.js 未能加载或不支持 WebGL。<br>
+          示意：Demux → <b>①喂入前丢包</b> → 解码器（<b>②skip_frame</b>）→ <b>③解码不输出</b> → 输出 →
+          <b>④输出不渲染</b> → 上屏；①② 只拦非参考帧，③④ 拦所有追帧区间的帧。</div>
       </div>
     </div>
     <div class="tscroll">
