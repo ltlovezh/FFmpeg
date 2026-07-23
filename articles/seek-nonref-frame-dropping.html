@@ -1498,7 +1498,11 @@ function visLoop(el, tick) {
     try { renderer = makeRenderer(container); } catch (e) { degrade(e); return null; }
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.1, 100);
-    camera.position.set(0, 4.2, 13.5);
+    /* 初始距离按容器宽高比自适应：宽屏拉近让卡片更大，窄屏拉远保证整排可见 */
+    const a0 = (container.clientWidth && container.clientHeight)
+      ? container.clientWidth / container.clientHeight : 2.2;
+    const camDistRow = Math.max(9.2, 4.6 / (0.364 * a0));
+    camera.position.set(0, 3.2, camDistRow);
     scene.add(new THREE.AmbientLight(0x8899bb, 1.1));
     const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(5, 10, 7); scene.add(dl);
     const grid = new THREE.GridHelper(46, 46, 0x24304a, 0x161d2e);
@@ -1718,6 +1722,9 @@ function visLoop(el, tick) {
         animatingOrder = true; edgeGroup.visible = false;
         layerLabels.forEach(sp => sp.visible = orderMode === 'pyr');
         controls.target.y = orderMode === 'pyr' ? 2.7 : 1.4; /* 分层视图抬高视角中心 */
+        /* 切换排列时重新取景：分层视图更高更宽，要退远；单排视图拉近 */
+        if (orderMode === 'pyr') camera.position.set(0, 5.0, Math.max(14.8, camDistRow * 1.6));
+        else camera.position.set(0, 3.2, camDistRow);
         for (const [, c] of cards) { const p = posOf(c.f); c.targetX = p.x; c.targetY = p.y; }
       }));
       /* 四象限表联动入口 */
