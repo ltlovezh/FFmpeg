@@ -7,17 +7,21 @@
 > （3D 场景经 CDN 加载 Three.js，需联网）。
 
 用户拖动进度条之后，画面多久能出来，是点播播放器最直观的体验指标之一。
-Seek 慢的根源几乎总是同一个：**目标时间点不是关键帧，播放器必须从前面的
-关键帧开始，把中间所有帧都解码一遍才能"追"到目标位置**。这段追帧
-（preroll）耗时与需要解码的帧数成正比，而其中相当一部分帧其实可以不解码
-——它们不被任何其他帧引用，丢掉不会产生任何画质代价。
+Seek 慢的根源几乎总是同一个：**目标时间点不是关键帧（不依赖任何其他帧、
+自身就能独立解码的帧——视频只能从这种帧开始解），播放器必须退回到前面
+最近的关键帧，把中间所有帧都解码一遍，才能"追"到目标位置**。这段追帧
+过程（行话叫 preroll）的耗时与需要解码的帧数成正比。而其中相当一部分帧
+其实可以不解码——它们不被任何其他帧引用，丢掉不会产生任何画质代价。
 
 本文围绕"丢帧"这一个杠杆，把问题讲透：
 
 1. 哪些帧可以安全地丢？——参考帧与 I/B/P 的真实关系；
-2. 怎么在不解码的前提下判定一帧是否可丢？——H.264/H.265 的 NAL 头判定法；
-3. 在哪里丢？——从 FFmpeg 软解到 Android MediaCodec、iOS VideoToolbox，
-   丢帧可以发生在流水线的四个不同位置，成本收益各不相同。
+2. 怎么在不解码的前提下判定一帧是否可丢？——只看 H.264/H.265 码流
+   "包裹标签"（NAL 头，第 3 章有背景介绍）的 1~2 个字节；
+3. 在哪里丢？——从 FFmpeg 软解（用 CPU 跑解码）到 Android 的
+   MediaCodec、iOS 的 VideoToolbox（两大移动平台的系统硬解接口，
+   解码交给芯片里的专用硬件），丢帧可以发生在流水线的四个不同位置，
+   成本收益各不相同。
 
 文中 FFmpeg 源码定位均基于当前仓库代码（`路径:行号`）。
 
@@ -34,8 +38,10 @@ flowchart LR
 
 ## 1. Seek 为什么慢：追帧的成本模型
 
-视频只能从关键帧（IDR/IRAP）开始解码。Seek 到任意时间点 T 时，播放器的
-标准动作是：
+视频只能从关键帧开始解码——H.264 里这种帧叫 IDR，H.265 里叫 IRAP，
+名字不同，意思一致：自身携带完整画面信息、不需要任何前置帧。相邻两个
+关键帧之间的一段帧序列称为一个 GOP（Group of Pictures，画面组）。
+Seek 到任意时间点 T 时，播放器的标准动作是：
 
 ```text
              ┌───────────────── 追帧区间（全部要解码，但都不上屏）──────────────┐
@@ -47,7 +53,9 @@ flowchart LR
       定位到 ≤T 的关键帧                            （第一帧 pts ≥ T 才上屏）
 ```
 
-于是 Seek 耗时可以粗略拆成：
+图中 pts 指显示时间戳（presentation timestamp，决定一帧该在什么时刻
+显示）；"上屏"即真正渲染到屏幕。追帧区间里解出来的帧都不上屏，纯粹是
+给后面的帧当解码底子。于是 Seek 耗时可以粗略拆成：
 
 ```text
 seek_latency ≈ 定位/IO 耗时 + N_preroll × t_decode + t_first_render
@@ -60,8 +68,8 @@ t_decode ：单帧解码耗时
 大头。优化只有两个方向：
 
 - **少解码**：把追帧区间里"没人依赖"的帧直接丢掉——本文主题；
-- **快解码**：让解码器以超实时吞吐运行（Android 的 `KEY_OPERATING_RATE`、
-  iOS 的异步解码等），第 5 节顺带覆盖。
+- **快解码**：让解码器远快于播放速度地跑，即"超实时解码"（Android 的
+  `KEY_OPERATING_RATE`、iOS 的异步解码等），第 5 节顺带覆盖。
 
 丢帧的前提是搞清楚：**丢掉一帧，会不会破坏后面帧的解码？** 这就引出参考
 帧的概念。
@@ -72,38 +80,44 @@ t_decode ：单帧解码耗时
 
 ### 2.1 参考链与 DPB
 
-H.264/H.265 解码器内部维护一个 **DPB（Decoded Picture Buffer）**：解码完
-的帧如果会被后续帧用作运动补偿的参考，就留在 DPB 里；不会被引用的帧解码
-完输出即弃。据此所有帧分成两类：
+视频压缩的核心手段是"帧间预测"：一帧不必存完整画面，只记录它与某些
+已解码帧之间的差异，解码时再拿那些帧当底子还原出来。被当作底子的帧就是
+**参考帧**；"谁参考谁"连起来形成的依赖链，就是**参考链**。
+
+为此，H.264/H.265 解码器内部维护一小块缓存，叫 **DPB（Decoded Picture
+Buffer，解码图像缓存）**：解码完的帧如果还会被后续帧当参考，就留在 DPB
+里备用；不会被引用的帧输出后立即释放。据此所有帧分成两类：
 
 - **参考帧（reference）**：进 DPB，后续帧依赖它。丢掉它 → 依赖它的帧
-  解码出错 → 错误随参考链扩散 → 花屏。
+  解码出错 → 错误沿参考链逐帧扩散 → 花屏；
 - **非参考帧（non-reference）**：不进 DPB，没有任何帧依赖它。丢掉它，
   解码器甚至不知道它存在过，**唯一的代价是这一帧的画面本身不出现**——
   而追帧区间的画面本来就不上屏，等于零代价。
 
 ### 2.2 参考性和 I/B/P 是两个正交维度
 
-很多资料把"丢非参考帧"等同于"丢 B 帧"，这是错的。可以从依赖关系的
-两个相反方向理解这两个概念：
+很多资料把"丢非参考帧"等同于"丢 B 帧"，这是错的。I/B/P 和参考性是
+两个互相独立的属性，可以从依赖关系的两个相反方向来理解：
 
-- **I/B/P 帧类型描述"当前帧怎样参考其他帧"**，也就是解码当前帧需要
-  参考哪些帧：I 帧不使用其他帧做帧间预测；P 帧使用一个参考列表；B 帧可以
-  使用两个参考列表，通常同时利用显示时间上位于它前后的参考帧。它由
-  slice header 的 `slice_type` 决定。
-- **参考性描述"当前帧是否会被其他帧参考"**：参考帧解码后要保留在 DPB
-  中，供其他帧做预测；非参考帧输出后即可释放。H.264/H.265 把这个信息
-  写在 NAL 头中。
+- **I/B/P 帧类型描述"当前帧怎样参考别人"**：I 帧不参考任何帧，独立
+  解码；P 帧从一份候选参考帧清单（参考列表）里选帧做预测，通常参考它
+  前面的帧；B 帧可以用两份参考列表，通常同时利用显示时间在它前、后的
+  参考帧。这个类型记录在 slice header 里的 `slice_type` 字段（slice 是
+  一帧内部的分条，一帧由一个或多个 slice 组成；slice header 是每条开头
+  的说明信息）。
+- **参考性描述"当前帧是否会被别人参考"**：参考帧解码后要留在 DPB 中
+  给后来的帧当底子；非参考帧输出后立即释放。H.264/H.265 把这个信息写在
+  NAL 头中（第 3 章展开）。
 
 换句话说，I/B/P 回答"**它需要谁**"，参考性回答"**以后谁需要它**"。
-一个维度描述当前帧的输入，另一个维度描述当前帧能否成为其他帧的输入，
-因此二者互不等价。组合出的六种情况在真实码流里都可能存在：
+一个说的是当前帧的输入，一个说的是当前帧会不会成为别人的输入，二者
+互相推导不出来。组合出的六种情况在真实码流里都可能存在：
 
 | | 参考帧 | 非参考帧 |
 | --- | --- | --- |
 | **I** | IDR（标准规定必为参考）、普通 I | 理论存在，实践罕见 |
-| **P** | 绝大多数 P | 少见（低延迟/时域分层编码会出现） |
-| **B** | **B-pyramid 的中层 B（x264/x265 默认开启）** | 最常见的可丢帧 |
+| **P** | 绝大多数 P | 少见（低延迟/时域分层编码会出现，见 3.2 ①） |
+| **B** | **B-pyramid 的中层 B（主流编码器 x264/x265 默认开启）** | 最常见的可丢帧 |
 
 #### B-pyramid：为什么 B 帧也能成为参考帧
 
@@ -118,7 +132,8 @@ H.264/H.265 解码器内部维护一个 **DPB（Decoded Picture Buffer）**：�
 "锚点 → 参考 B → 非参考 B"的层级引用结构，因此得名。这里的
 "pyramid"强调的是**层级依赖**，不表示图形一定只有一个几何尖顶。
 
-下面是一个典型的 mini-GOP（`bf=3` + b-pyramid）。先只看显示时间轴：
+下面是一个典型的 mini-GOP（编码参数 `bf=3`，即最多连续 3 个 B 帧，且
+开启 b-pyramid）。先只看显示时间轴：
 
 ```mermaid
 flowchart LR
@@ -178,8 +193,16 @@ B-pyramid 让叶子 B 使用距离更近的参考帧，通常能提高压缩效�
 
 ## 3. 如何判定：NAL 头 1~2 字节就够了
 
-判定一帧是否可丢，**不需要解码，甚至不需要解析 slice header**——两个标准
-都把参考性写在了 NAL 头里。这正是"解码前丢帧"可行的根本原因。
+先补一个背景。H.264/H.265 的码流由一个个 **NAL 单元**（Network
+Abstraction Layer unit）组成：编码器把所有输出切成这种统一格式的
+"数据包裹"，每个包裹开头有 1~2 字节的 **NAL 头**，标明包裹里装的是
+什么。真正装着图像数据的叫 **VCL NAL**（Video Coding Layer，视频编码
+层）；其余是非 VCL NAL，比如记录分辨率等全局参数的 SPS/PPS（参数集）、
+携带附加信息的 SEI。
+
+好消息是：判定一帧是否可丢，**不需要解码，甚至不需要解析 slice
+header**——两个标准都把参考性直接写在了 NAL 头里。这正是"解码前丢帧"
+可行的根本原因。
 
 ### 3.1 H.264：看 `nal_ref_idc`
 
@@ -203,8 +226,9 @@ int nal_type =  nal[0] & 0x1F;        /* 5 == IDR slice, 1 == 非 IDR slice */
   且 IDR/SPS/PPS 所在 NAL 必须非 0——所以**读 AU 里第一个 VCL NAL
   就能判定整帧**。
 
-I/B/P 则要再解一层 slice header（`first_mb_in_slice` 之后的第二个
-指数哥伦布字段 `slice_type`）：
+I/B/P 则要再多解析一层 slice header：`slice_type` 是其中第二个字段
+（排在 `first_mb_in_slice` 之后），用指数哥伦布编码（Exp-Golomb，一种
+按位存储的变长编码）写入，需要逐位读取：
 
 | slice_type | %5 | 帧类型 |
 | ---: | ---: | --- |
@@ -218,8 +242,10 @@ I/B/P 则要再解一层 slice header（`first_mb_in_slice` 之后的第二个
 `libavcodec/h264data.c:37`（`ff_h264_golomb_to_pict_type[slice_type % 5]`），
 parser 的完整用法在 `libavcodec/h264_parser.c:364`。
 
-关键帧判定除了 `nal_unit_type == 5`（IDR），还要认 **recovery point SEI**
-（open-GOP 流的恢复点，`libavcodec/h264_parser.c:366`）。
+关键帧判定除了 `nal_unit_type == 5`（IDR），还要认 **recovery point
+SEI**：有些流的关键帧不是 IDR，而是用这种 SEI 消息标出"从这里进入、
+播放若干帧后画面可完全恢复"的位置（多见于 open-GOP 流，open-GOP 的
+含义见 3.2 ②；FFmpeg 的处理在 `libavcodec/h264_parser.c:366`）。
 
 ### 3.2 H.265：看 `nal_unit_type` 的奇偶
 
@@ -254,31 +280,44 @@ FFmpeg 的判定函数就是这张表：`ff_hevc_nal_is_nonref()`，
 两个 HEVC 特有的细节必须写清楚：
 
 **① `_N` 的严格含义是"同一时域子层内非参考"（sub-layer non-reference）。**
-绝大多数点播流只有一个时域层（所有 NAL 的 `nuh_temporal_id_plus1 == 1`），
-此时 `_N` 就是真非参考，直接丢——FFmpeg 软解也是这么做的，不看
-TemporalId。如果流真的启用了时域分层（temporal SVC），严格安全的做法是
-只丢**最高 TemporalId 层**的 `_N` 帧；另外"丢掉整个最高时域层"本身就是
-标准定义的合法降帧率手段（TSA/STSA 类型就是为此设计的切换点）。
+先解释"时域分层"（temporal layering）：把帧分成若干"帧率层"，只解
+第 0 层就得到一个低帧率版本，每多解一层帧率翻倍；NAL 头里的
+`TemporalId` 就是层号。绝大多数点播流不用这个特性，只有一个时域层
+（所有 NAL 的 `nuh_temporal_id_plus1 == 1`），此时 `_N` 就是真非参考，
+直接丢——FFmpeg 软解也是这么做的，不看 TemporalId。如果流真的启用了
+时域分层，严格安全的做法是只丢**最高 TemporalId 层**的 `_N` 帧；另外
+"丢掉整个最高时域层"本身就是标准定义的合法降帧率手段（TSA/STSA 类型
+就是为此设计的切换点）。
 
 **② IRAP（16~23）里藏着 open-GOP 陷阱。**
+IRAP（Intra Random Access Point，帧内随机访问点）是 H.265 对各种
+"可以从这里开始解码"的关键帧的统称，NAL 类型值 16~23：
 
 | 类型 | 值 | 含义 |
 | --- | ---: | --- |
 | BLA_W_LP / BLA_W_RADL / BLA_N_LP | 16/17/18 | 拼接产生的断点关键帧 |
-| IDR_W_RADL / IDR_N_LP | 19/20 | 闭 GOP 关键帧 |
-| **CRA_NUT** | 21 | **open-GOP 关键帧** |
+| IDR_W_RADL / IDR_N_LP | 19/20 | 闭 GOP 关键帧（其后的帧绝不引用它之前的内容） |
+| **CRA_NUT** | 21 | **open-GOP 关键帧**（允许跨界引用，压缩率更高） |
 
-Seek 落到 CRA 上时，紧随其后的 **RASL 帧（8/9）引用了 CRA 之前的帧**，
-此时无法解码、**必须丢弃**（RADL 帧则不依赖前面，可正常解）。这是 Seek
-场景里另一类"必丢帧"，与性能优化无关，属于正确性要求。
+所谓 open-GOP（开放式 GOP），指 GOP 之间存在跨界引用。CRA 关键帧后面
+跟着一批"前导帧"（leading picture：显示时间在 CRA 之前、解码顺序在
+CRA 之后的帧），其中 **RASL 帧（Random Access Skipped Leading，类型
+8/9）引用了 CRA 之前的帧**。连续播放时那些帧都在，一切正常；但 Seek
+恰好落到 CRA 上时，CRA 之前的帧没有解码，RASL 帧无从解起，**必须丢弃**
+（另一类前导帧 RADL——Random Access Decodable Leading，类型 6/7——
+不依赖 CRA 之前的内容，可正常解码）。这是 Seek 场景里另一类"必丢帧"，
+与性能优化无关，属于正确性要求。
 
 I/B/P 判定：HEVC slice header 的 `slice_type` 取值与 H.264 **不同**——
 `0 = B, 1 = P, 2 = I`（映射见 `libavcodec/hevc/parser.c:143`）。
 
 ### 3.3 判定代码：一个包（AU）能不能整包丢
 
-demuxer 吐出的一个 `AVPacket` 就是一个 AU（一帧）。MP4/FLV 里 NAL 用
-4 字节长度前缀分隔（AVCC/HVCC），TS/Annex B 用 start code 分隔。以更常见
+demuxer（解封装器，把 MP4/FLV 这类容器文件拆成一个个音视频压缩数据包）
+吐出的一个 `AVPacket` 就是一个 **AU**（Access Unit，访问单元——一帧
+画面对应的全部 NAL 的集合）。包内 NAL 的分隔方式取决于封装格式：
+MP4/FLV 在每个 NAL 前放 4 字节长度前缀（AVCC/HVCC 格式）；TS 流则用
+固定字节序列 start code（`00 00 01`）作边界（Annex B 格式）。以更常见
 的长度前缀格式为例，完整的可丢判定不到 30 行：
 
 ```c
@@ -310,8 +349,9 @@ static int packet_droppable(const uint8_t *data, int size,
 }
 ```
 
-由 3.1/3.2 的"同帧一致性"约束，找到第一个 VCL NAL 即可返回，复杂度
-O(非 VCL 前缀数)，近似 O(1)，且零拷贝。
+由 3.1/3.2 的"同帧一致性"约束，扫到包里第一个 VCL NAL 就能下结论——
+前面最多跳过几个 SPS/PPS/SEI 这样的小单元。整个判定只读几个字节、不
+复制任何数据，耗时可以忽略不计。
 
 ### 3.4 不想碰码流：三个现成的判定层
 
@@ -401,17 +441,20 @@ if (s->avctx->skip_frame >= AVDISCARD_ALL ||
 
 配套的软解加速项（追帧期间画面不上屏，画质无所谓）：
 
-- `avctx->skip_loop_filter = AVDISCARD_ALL`：跳过去块滤波
-  （`libavcodec/h264_slice.c:1962`），H.264 软解可省 10%~20%。注意参考帧
-  跳滤波会引入微小漂移，保守做法是只设到 `AVDISCARD_NONREF`（只跳非参考
-  帧的滤波，零风险）；
+- `avctx->skip_loop_filter = AVDISCARD_ALL`：跳过去块滤波（loop
+  filter，解码末尾用来消除块状压缩痕迹的滤波步骤，
+  `libavcodec/h264_slice.c:1962`），H.264 软解可省 10%~20%。注意：参考
+  帧跳了滤波，画面会与编码器所用的参考产生细微偏差，且误差沿参考链
+  逐帧累积（俗称"漂移"）；保守做法是只设到 `AVDISCARD_NONREF`（只跳
+  非参考帧的滤波，零风险）；
 - `avctx->flags2 |= AV_CODEC_FLAG2_FAST`：允许不完全合规的加速路径。
 
 ### 4.2 作用点①：喂入前丢包（硬解通用方案）
 
-硬解码器（作为黑盒的 MediaCodec、VideoToolbox）没有 `skip_frame` 这样的
-旋钮，但这不重要——**非参考帧的定义本身就保证了解码器不需要它**。在
-demux 之后、喂入解码器之前把整包丢掉，解码器完全无感：
+硬解码器（MediaCodec、VideoToolbox——对使用者是黑盒：只能喂数据、取
+结果，无法干预内部行为）没有 `skip_frame` 这样的旋钮，但这不重要——
+**非参考帧的定义本身就保证了解码器不需要它**。在 demux（解封装）之后、
+喂入解码器之前把整包丢掉，解码器完全无感：
 
 ```text
 AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
@@ -425,11 +468,12 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 1. **容器 flag**：`pkt->flags & AV_PKT_FLAG_DISPOSABLE`，有 `sdtp` 时零成本；
 2. **自解析 NAL 头**：3.3 的函数，~30 行，无依赖，推荐兜底方案；
-3. **FFmpeg 现成 BSF**：`filter_units` 的 `discard` 选项
+3. **FFmpeg 现成 BSF**（bitstream filter，码流过滤器：不解码，直接对
+   压缩码流做删改）：`filter_units` 的 `discard` 选项
    （`libavcodec/bsf/filter_units.c:251`），判定逻辑与解码器一致——H.264 按
    `nal_ref_idc`（`libavcodec/cbs_h264.c:647`），H.265 按 `_N` 类型表
-   （`libavcodec/cbs_h265.c:660`）。包内 VCL 全删时 BSF 返回 EAGAIN，
-   自动吞包。可以先用命令行验证收益：
+   （`libavcodec/cbs_h265.c:660`）。包内 VCL 全被删掉时，BSF 返回
+   EAGAIN（"暂无输出"），整包自动被吞掉。可以先用命令行验证收益：
 
    ```bash
    # 数一数丢掉非参考帧后还剩多少帧（对比原始帧数）
@@ -449,8 +493,9 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 ### 4.4 作用点④：输出但不渲染（最后的兜底）
 
-解码输出已经拿到，只是不上屏。省掉的是纹理上传 + GL 绘制
-（Android 上即 `SurfaceTexture.updateTexImage` + OES→2D 那一段）：
+解码输出已经拿到，只是不上屏。省掉的是把解码结果送上 GPU 并画出来的
+开销（纹理上传 + OpenGL 绘制；Android 上即
+`SurfaceTexture.updateTexImage` + OES 纹理转 2D 纹理那一段）：
 
 - **Android**：`releaseOutputBuffer(index, /*render=*/false)`；
   FFmpeg wrapper 对应 `av_mediacodec_release_buffer(buffer, 0)`
@@ -466,8 +511,11 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 ### 5.1 关键架构差异：hwaccel 模型 vs wrapper 模型
 
-FFmpeg 接入硬解有两种完全不同的模型，`skip_frame` 在两者上的行为截然
-不同——这是本文最值得记住的工程结论之一：
+FFmpeg 接入硬解有两种完全不同的模型：**hwaccel 模型**（hardware
+acceleration，硬件加速——FFmpeg 的软解码器照常拆包、解析 NAL 和各级
+header，只把最重的像素级计算交给硬件）和 **wrapper 模型**（包装——
+FFmpeg 只当搬运工，把整包数据原样转交给系统解码器）。`skip_frame` 在
+两者上的行为截然不同——这是本文最值得记住的工程结论之一：
 
 ```mermaid
 flowchart TB
@@ -488,7 +536,7 @@ flowchart TB
 
 | 模型 | 例子 | `skip_frame=NONREF` | 原因 |
 | --- | --- | --- | --- |
-| hwaccel | **VideoToolbox**、VAAPI、D3D11VA、NVDEC | ✅ 生效 | NAL 解析和丢弃决策在 FFmpeg 软件层完成，`h264dec.c:626` 的 `continue` 发生在任何 hwaccel 回调之前，被丢的 NAL 根本不会提交给硬件 |
+| hwaccel | **VideoToolbox**、VAAPI（Linux）、D3D11VA（Windows）、NVDEC（NVIDIA） | ✅ 生效 | NAL 解析和丢弃决策在 FFmpeg 软件层完成，`h264dec.c:626` 的 `continue` 发生在任何 hwaccel 回调之前，被丢的 NAL 根本不会提交给硬件 |
 | wrapper | **MediaCodec**（`mediacodecdec.c`） | ❌ 不生效 | 整包透传给系统解码器，FFmpeg 不拆 NAL；wrapper 源码中没有任何 `skip_frame` 处理 |
 
 所以：**iOS 上走 FFmpeg + videotoolbox hwaccel，设置
@@ -527,8 +575,8 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 /* non-realtime, best effort */);
 ```
 
 告诉解码器"按最大吞吐跑，别按播放节奏调度"。厂商实现质量参差（部分
-SoC 忽略该 key），但在主流平台上对追帧速度有实打实的提升；追上目标后可
-用 `setParameters` 恢复。
+手机芯片的解码器会忽略该 key），但在主流平台上对追帧速度有实打实的
+提升；追上目标后可用 `setParameters` 恢复。
 
 ### 5.3 iOS VideoToolbox：两条路
 
@@ -555,7 +603,7 @@ VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
 ```mermaid
 flowchart TD
     A["用户 Seek 到 T"] --> B["av_seek_frame(BACKWARD)<br/>定位 ≤T 的关键帧"]
-    B --> C["flush 解码器<br/>avcodec_flush_buffers / codec.flush"]
+    B --> C["清空解码器缓存（flush）<br/>avcodec_flush_buffers / codec.flush"]
     C --> D{"读包，pkt 在追帧区间?"}
     D -->|"是，且非参考帧"| E["① 丢包不喂<br/>(软解: skip_frame=NONREF)"]
     D -->|"是，参考帧"| F["喂入解码<br/>③ DECODE_ONLY / DoNotOutputFrame"]
