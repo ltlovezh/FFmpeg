@@ -433,7 +433,7 @@ static int packet_droppable(const uint8_t *data, int size,
 
 ```mermaid
 flowchart LR
-    DMX["Demuxer<br/>AVPacket"] -->|"① 包级丢弃<br/>喂入前"| DEC["解码器"]
+    DMX["Demuxer<br/>AVPacket"] -->|"① 包级丢弃<br/>解码前"| DEC["解码器"]
     DEC -->|"② 解码器内跳过<br/>skip_frame"| DPB["DPB/输出队列"]
     DPB -->|"③ 解码不输出<br/>DECODE_ONLY"| OUT["输出帧"]
     OUT -->|"④ 输出不渲染<br/>release(false)"| RND["渲染/上屏"]
@@ -447,7 +447,7 @@ flowchart LR
 
 | 作用点 | 省掉的成本 | 适用帧 | 依赖 |
 | --- | --- | --- | --- |
-| ① 喂入前丢包 | 解码 + 输出 + 渲染，全省 | 仅非参考帧 | 无（任何解码器都可用） |
+| ① 解码前丢包 | 解码 + 输出 + 渲染，全省 | 仅非参考帧 | 无（任何解码器都可用） |
 | ② 解码器内跳过 | 同上（省掉 slice 解码） | 仅非参考帧（NONREF 级） | 解码器支持 `skip_frame` |
 | ③ 解码不输出 | 输出拷贝/回调 + 渲染 | **任何帧**（参考链由解码器维持） | 平台 API 支持 |
 | ④ 输出不渲染 | 仅渲染（纹理上传/GL） | 任何帧 | 无 |
@@ -512,7 +512,7 @@ if (s->avctx->skip_frame >= AVDISCARD_ALL ||
   非参考帧的滤波，零风险）；
 - `avctx->flags2 |= AV_CODEC_FLAG2_FAST`：允许不完全合规的加速路径。
 
-### 4.2 作用点①：喂入前丢包（硬解通用方案）
+### 4.2 作用点①：解码前丢包（硬解通用方案）
 
 硬解码器（MediaCodec、VideoToolbox——对使用者是黑盒：只能喂数据、取
 结果，无法干预内部行为）没有 `skip_frame` 这样的旋钮，但这不重要——
@@ -604,18 +604,18 @@ flowchart TB
 
 所以：**iOS 上走 FFmpeg + videotoolbox hwaccel，设置
 `skip_frame = AVDISCARD_NONREF` 一行代码就完成了解码前丢帧；Android
-MediaCodec 必须在喂入前自己丢（4.2）**。
+MediaCodec 必须在解码前自己丢（4.2）**。
 
 ### 5.2 Android MediaCodec：三层手段 + 超实时解码
 
 | 层次 | API | 版本 | 效果 |
 | --- | --- | --- | --- |
-| ① 喂入前丢包 | 非参考 AU 不 `queueInputBuffer`（判定见 3.3） | 全版本 | 省解码+输出+渲染，首选 |
+| ① 解码前丢包 | 非参考 AU 不 `queueInputBuffer`（判定见 3.3） | 全版本 | 省解码+输出+渲染，首选 |
 | ③ 解码不输出 | `BUFFER_FLAG_DECODE_ONLY` | API 34+ | 参考帧追帧不出帧 |
 | ④ 输出不渲染 | `releaseOutputBuffer(index, false)` | 全版本 | 省 `updateTexImage`+GL |
 
 ```java
-// ① 喂入前丢包（追帧区间内）
+// ① 解码前丢包（追帧区间内）
 if (inPreroll && isNonRefAU(sampleData, isHevc)) {
     extractor.advance();          // 跳过，不喂
     continue;
@@ -646,7 +646,7 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 /* non-realtime, best effort */);
 **路线 A：FFmpeg hwaccel**——直接用 4.1 的 `skip_frame`，无须额外工作，
 被丢的非参考 NAL 不会到达 VT。
 
-**路线 B：自建 VTDecompressionSession**——喂入前丢包（3.3）照常适用；
+**路线 B：自建 VTDecompressionSession**——解码前丢包（3.3）照常适用；
 追帧区间内的参考帧用 `kVTDecodeFrame_DoNotOutputFrame`：
 
 ```c
@@ -738,7 +738,7 @@ while (read_and_decode(&frame)) {
 FFmpeg 软解和 hwaccel 模型（VideoToolbox 等）原生支持
 （`skip_frame = AVDISCARD_NONREF`，丢弃发生在 NAL 解析层，硬件无感）；
 MediaCodec 这类 wrapper/黑盒解码器不支持——但也不需要支持：非参考帧的
-定义保证了"喂入前丢包"与"解码器内跳过"效果完全等价。判定只需读 NAL
+定义保证了"解码前丢包"与"解码器内跳过"效果完全等价。判定只需读 NAL
 头 1~2 字节。解码前丢不掉的（参考帧），用"解码不输出"
 （`BUFFER_FLAG_DECODE_ONLY` / `kVTDecodeFrame_DoNotOutputFrame`）和
 "输出不渲染"（`releaseOutputBuffer(false)`）两层兜底快速追帧。

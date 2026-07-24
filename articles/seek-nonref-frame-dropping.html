@@ -423,7 +423,7 @@ footer .links { margin-bottom: 8px; }
     <div class="stat-card"><div class="tag">判定</div><div class="num">1<em>~</em>2<span class="unit"> 字节</span></div>
       <div class="lbl">只读 NAL 头就能判定可丢<br>无需解码任何像素</div></div>
     <div class="stat-card"><div class="tag">落地</div><div class="num"><em>4</em><span class="unit"> 个作用点</span></div>
-      <div class="lbl">流水线上可下手的丢帧位置<br>喂入前 · 解码内 · 不输出 · 不渲染</div></div>
+      <div class="lbl">流水线上可下手的丢帧位置<br>解码前 · 解码内 · 不输出 · 不渲染</div></div>
   </div>
   <div class="hint">▼ 向下滚动，从成本模型开始</div>
 </header>
@@ -721,7 +721,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
           <div>
             <h4>丢帧闸门</h4>
             <div class="gate-list">
-              <label class="switch"><input type="checkbox" id="m4-g1"><span class="tr"></span>① 喂入前丢包（非参考）</label>
+              <label class="switch"><input type="checkbox" id="m4-g1"><span class="tr"></span>① 解码前丢包（非参考）</label>
               <label class="switch"><input type="checkbox" id="m4-g3"><span class="tr"></span>③ 解码不输出（DECODE_ONLY）</label>
               <label class="switch"><input type="checkbox" id="m4-g4"><span class="tr"></span>④ 输出不渲染（release false）</label>
             </div>
@@ -752,14 +752,14 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
       <div class="gl-wrap" id="m4-wrap" style="height:430px">
         <div class="gl-hint">拖动旋转视角</div>
         <div class="gl-fallback">⚠️ Three.js 未能加载或不支持 WebGL。<br>
-          示意：Demux → <b>①喂入前丢包</b> → 解码器（<b>②skip_frame</b>）→ <b>③解码不输出</b> → 输出 →
+          示意：Demux → <b>①解码前丢包</b> → 解码器（<b>②skip_frame</b>）→ <b>③解码不输出</b> → 输出 →
           <b>④输出不渲染</b> → 上屏；①② 只拦非参考帧，③④ 拦所有追帧区间的帧。</div>
       </div>
     </div>
     <div class="tscroll">
       <table class="t">
         <tr><th>作用点</th><th>省掉的成本</th><th>适用帧</th><th>依赖</th></tr>
-        <tr><td>① 喂入前丢包</td><td>解码 + 输出 + 渲染，全省</td><td>仅非参考帧</td><td>无（任何解码器都可用）</td></tr>
+        <tr><td>① 解码前丢包</td><td>解码 + 输出 + 渲染，全省</td><td>仅非参考帧</td><td>无（任何解码器都可用）</td></tr>
         <tr><td>② 解码器内跳过 <code>skip_frame</code></td><td>同上（省掉 slice 解码）</td><td>仅非参考帧（NONREF 级）</td><td>FFmpeg 软解 / hwaccel（<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>hevcdec.c:3795</code></a>）</td></tr>
         <tr><td>③ 解码不输出</td><td>输出拷贝/回调 + 渲染</td><td><b>任何帧</b>（参考链由解码器维持）</td><td>API 34 <code>DECODE_ONLY</code> / VT <code>DoNotOutputFrame</code></td></tr>
         <tr><td>④ 输出不渲染</td><td>仅渲染（纹理上传/GL）</td><td>任何帧</td><td>无</td></tr>
@@ -782,7 +782,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
       <strong>根本不会提交给硬件</strong>，<code>skip_frame</code> ✅ 生效；</li>
     <li><strong>wrapper 模型</strong>（包装——FFmpeg 只当搬运工，把整包数据原样转交系统解码器；
       如 Android MediaCodec）：整包透传给系统黑盒，<code>skip_frame</code> ❌ 完全无效——
-      丢帧必须发生在<strong>喂入之前</strong>。</li>
+      丢帧必须发生在<strong>解码之前</strong>（作用点①）。</li>
   </ul>
 
   <div class="module" id="m5">
@@ -822,14 +822,14 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
       <div class="tscroll">
         <table class="t">
           <tr><th>层次</th><th>API</th><th>版本</th><th>效果</th></tr>
-          <tr><td>① 喂入前丢包</td><td>非参考 AU 不 <code>queueInputBuffer</code></td><td>全版本</td><td>省解码+输出+渲染，首选</td></tr>
+          <tr><td>① 解码前丢包</td><td>非参考 AU 不 <code>queueInputBuffer</code></td><td>全版本</td><td>省解码+输出+渲染，首选</td></tr>
           <tr><td>③ 解码不输出</td><td><code>BUFFER_FLAG_DECODE_ONLY</code></td><td>API 34+</td><td>参考帧追帧不出帧（专为 seek preroll 设计）</td></tr>
           <tr><td>④ 输出不渲染</td><td><code>releaseOutputBuffer(index, false)</code></td><td>全版本</td><td>省 updateTexImage + GL</td></tr>
         </table>
       </div>
       <div class="codeblock">
         <button class="copy-btn" data-copy="cp-android">复制</button>
-<pre id="cp-android"><code><span class="cm">// ① 喂入前丢包（追帧区间内）</span>
+<pre id="cp-android"><code><span class="cm">// ① 解码前丢包（追帧区间内）</span>
 <span class="kw">if</span> (inPreroll &amp;&amp; isNonRefAU(sampleData, isHevc)) {
     extractor.advance();          <span class="cm">// 跳过，不喂</span>
     <span class="kw">continue</span>;
@@ -851,7 +851,7 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime *
     <div class="tabpane" id="m5-pane-ios">
       <p style="font-size:13.5px"><b>路线 A：FFmpeg hwaccel</b> —— 直接
         <code>avctx-&gt;skip_frame = AVDISCARD_NONREF</code>，一行完成解码前丢帧，无须额外工作。<br>
-        <b>路线 B：自建 VTDecompressionSession</b> —— 喂入前丢包照常适用；追帧区间内的参考帧用
+        <b>路线 B：自建 VTDecompressionSession</b> —— 解码前丢包照常适用；追帧区间内的参考帧用
         <code>kVTDecodeFrame_DoNotOutputFrame</code>：</p>
       <div class="codeblock">
         <button class="copy-btn" data-copy="cp-ios">复制</button>
@@ -957,7 +957,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
     <li><strong>FFmpeg 软解 / hwaccel 模型</strong>：原生支持——
       <code>skip_frame = AVDISCARD_NONREF</code>，丢弃发生在 NAL 解析层，硬件无感；</li>
     <li><strong>MediaCodec 这类 wrapper</strong>：不支持——但也不需要：非参考帧的定义保证了
-      「喂入前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节；</li>
+      「解码前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节；</li>
     <li><strong>解码前丢不掉的参考帧</strong>：用「解码不输出」（<code>DECODE_ONLY</code> /
       <code>DoNotOutputFrame</code>）和「输出不渲染」（<code>releaseOutputBuffer(false)</code>）
       两层兜底快速追帧。</li>
@@ -1366,7 +1366,7 @@ function visLoop(el, tick) {
       } else {
         c.verdict.textContent = '❌ skip_frame 无效';
         c.verdict.style.color = CL.bad;
-        c.note.textContent = 'NAL 原样进黑盒 → 只能在喂入前自己丢包';
+        c.note.textContent = 'NAL 原样进黑盒 → 只能在解码前自己丢包';
       }
     }
   }
@@ -1876,7 +1876,7 @@ function visLoop(el, tick) {
       g.position.x = x; scene.add(g);
       return { group: g, door, open: true };
     }
-    const gate1 = arch(G1X, 0xfb923c, '①', '喂入前丢包');
+    const gate1 = arch(G1X, 0xfb923c, '①', '解码前丢包');
     const gate3 = arch(G3X, 0x22d3ee, '③', '解码不输出');
     const gate4 = arch(G4X, 0x34d399, '④', '输出不渲染');
 
