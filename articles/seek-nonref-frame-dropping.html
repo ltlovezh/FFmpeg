@@ -454,8 +454,8 @@ footer .links { margin-bottom: 8px; }
         <div id="m1-timeline"></div>
         <div class="legend">
           <span class="it"><span class="sw" style="background:var(--key)"></span>关键帧 I</span>
-          <span class="it"><span class="sw" style="background:var(--ref)"></span>参考帧（会被引用的 P 和 B）</span>
-          <span class="it"><span class="sw" style="background:var(--nonref)"></span>非参考帧（没人引用，可丢）</span>
+          <span class="it"><span class="sw" style="background:var(--ref)"></span>参考帧（会被参考的 P 和 B）</span>
+          <span class="it"><span class="sw" style="background:var(--nonref)"></span>非参考帧（没人参考，可丢）</span>
           <span class="it"><span class="sw" style="background:#ccd6e5; border:1px dashed #8fa0b8"></span>被跳过（不解码）</span>
         </div>
         <div class="controls" style="margin-top:14px">
@@ -491,7 +491,7 @@ footer .links { margin-bottom: 8px; }
   <p class="lead">视频压缩靠「帧间预测」：一帧只记录它与某些已解码帧的差异，解码时拿那些帧当底子还原。
     被当作底子的就是<strong>参考帧</strong>，「谁参考谁」连成的依赖链就是<strong>参考链</strong>；
     解码器内部用一小块缓存 <strong>DPB</strong>（Decoded Picture Buffer，解码图像缓存）
-    存放还会被引用的帧，不被引用的帧输出即弃。于是丢帧的后果泾渭分明：</p>
+    存放还会被参考的帧，不被参考的帧输出即弃。于是丢帧的后果泾渭分明：</p>
   <ul>
     <li><strong style="color:var(--ref)">丢非参考帧</strong>——没有任何帧依赖它，
       解码器甚至不知道它存在过，<strong>零代价</strong>；</li>
@@ -510,7 +510,7 @@ footer .links { margin-bottom: 8px; }
   <p>一个说的是<strong>输入</strong>，一个说的是<strong>输出</strong>，互相推导不出来——
     组合出的六种情况在真实码流里都可能存在：</p>
   <p><strong>B-pyramid：为什么 B 帧也能成为参考帧。</strong>传统 B 帧只参考两侧的 I/P 锚点，
-    自己是不被引用的「叶子」；B-pyramid 把连续 B 帧组织成层级
+    自己是不被参考的「叶子」；B-pyramid 把连续 B 帧组织成层级
     （主流编码器 x264/x265——最常用的 H.264/H.265 开源编码器——默认开启）：</p>
   <ul>
     <li>先让中间的 <b>B2</b> 参考 I0/P4，并把解码后的 B2 保留在 DPB 里；</li>
@@ -540,7 +540,7 @@ footer .links { margin-bottom: 8px; }
       <div class="toast" id="m2-toast"></div>
       <div class="gl-hint">拖动旋转 · 滚轮缩放 · 悬停看依赖 · 点击帧 = 丢弃它</div>
       <div class="gl-fallback">⚠️ Three.js 未能加载（需联网访问 jsDelivr CDN）或当前环境不支持 WebGL。<br>
-        示意：mini-GOP <code>I0 B1 B2 B3 P4</code> 中，B2 是被 B1/B3 引用的「参考 B」，
+        示意：mini-GOP <code>I0 B1 B2 B3 P4</code> 中，B2 是被 B1/B3 参考的「参考 B」，
         丢弃它会沿参考链扩散花屏；B1/B3 是非参考帧，可安全丢弃。</div>
     </div>
     <p class="m-tip" style="margin-top:10px">试试：先点掉 <b style="color:var(--nonref)">B1</b>（非参考，安全落地）；
@@ -758,8 +758,10 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
           </div>
         </div>
         <div class="note warn" id="m4-warn" style="font-size:12px"><b>参考链已破坏！</b>
-          BIDIR 会误伤参考 B、NONKEY 只留关键帧——下游帧沿参考链花屏（红色方块）。
-          只有 NONREF 档是无损的。</div>
+          BIDIR 丢掉了被 B1/B3 参考的 B2（参考 B）——仍去解码的 B1/B3 因参考缺失而<b>花屏</b>
+          （红色方块）；NONKEY 只留关键帧。只有 NONREF 档是无损的。
+          <span style="opacity:.75">（演示特意放行 B1/B3 以展示花屏；FFmpeg 实际会把
+          所有 B 一并丢弃，成本条按真实行为计算。）</span></div>
       </div>
       <div class="gl-wrap" id="m4-wrap" style="height:430px">
         <div class="gl-hint">拖动旋转视角</div>
@@ -768,6 +770,14 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
           <b>④输出不渲染</b> → 上屏；①② 只拦非参考帧，③④ 拦所有追帧区间的帧。</div>
       </div>
     </div>
+    <div class="legend" style="margin-top:12px">
+      <span class="it"><span class="sw" style="background:var(--key)"></span>关键帧 I</span>
+      <span class="it"><span class="sw" style="background:var(--ref)"></span>参考帧（会被参考的 P 和 B）</span>
+      <span class="it"><span class="sw" style="background:var(--nonref)"></span>非参考帧（没人参考，可丢）</span>
+      <span class="it"><span class="sw" style="background:var(--bad)"></span>花屏帧（参考链被破坏）</span>
+    </div>
+    <p class="m-tip" style="margin-top:8px">每个小方块是一帧（Demux 吐出的压缩数据包 AVPacket），头顶标着帧号，
+      按 I0 B1 B2 B3 P4 循环出场；<b>穿过解码器后方块变大</b>＝压缩数据已被解码成原始画面帧。</p>
     <div class="tscroll">
       <table class="t">
         <tr><th>作用点</th><th>省掉的成本</th><th>适用帧</th><th>依赖</th></tr>
@@ -784,31 +794,31 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
     <ul>
       <li><strong>① 解码前丢包</strong>：判定（上面的 NAL 头检查）和丢弃都由你的应用代码完成，
         解码器完全没参与——所以<strong>任何解码器都能用</strong>，包括没有 <code>skip_frame</code> 开关的
-        黑盒（Android MediaCodec）；</li>
+        解码器（如 Android MediaCodec）；</li>
       <li><strong>② 解码器内跳过</strong>：你只设一个 <code>skip_frame = AVDISCARD_NONREF</code>，
         判定和跳过全由解码器内部完成，一行代码搞定——但前提是<strong>解码器支持这个开关</strong>
         （FFmpeg 软解和 hwaccel / VideoToolbox 支持）。</li>
     </ul>
-    <p>一句话选型：<strong>能用 FFmpeg <code>skip_frame</code> 就用②（省事，一行代码）；黑盒硬解没这个开关，
+    <p>一句话选型：<strong>能用 FFmpeg <code>skip_frame</code> 就用②（省事，一行代码）；Android MediaCodec 这类硬解没这个开关，
       只能用①（通用，自己判定）</strong>。这也是第 5 章要展开的关键差异。</p>
-    <div class="note">软解追帧还可叠加：<code>skip_loop_filter = AVDISCARD_NONREF</code>
-      ——跳过去块滤波（解码末尾消除块状压缩痕迹的滤波步骤）。NONREF 档只跳非参考帧的，零风险；
-      设 ALL 收益更大，但参考帧的误差会沿参考链逐帧累积（「漂移」）。另可加
-      <code>AV_CODEC_FLAG2_FAST</code>。</div>
   </div>
 </section>
 
 <!-- ==================== CH 5 ==================== -->
 <section class="chapter" id="ch5">
   <div class="chap-head"><span class="no">05</span><h2>硬解落地：为什么 iOS 顺手、Android 要自己动手</h2></div>
-  <p class="lead">FFmpeg 接入硬解有两种模型，<code>skip_frame</code> 行为截然不同：</p>
+  <p class="lead">先补一个背景：解码一帧包含两类活——<strong>「读懂码流」</strong>（解析各级头部、
+    搞清帧类型和参考关系，轻量的逻辑活）和<strong>「重建像素」</strong>（拿参考帧加差异数据把整幅画面
+    算出来，真正吃算力的活）。FFmpeg 接入硬解的两种模型，区别就在<strong>这两类活分别由谁干</strong>：</p>
   <ul>
-    <li><strong>hwaccel 模型</strong>（硬件加速——FFmpeg 照常拆包、解析 NAL，只把像素级计算交给硬件；
-      如 iOS VideoToolbox、VAAPI、NVDEC）：丢弃决策在软件层完成，被丢的 NAL
-      <strong>根本不会提交给硬件</strong>，<code>skip_frame</code> ✅ 生效；</li>
-    <li><strong>wrapper 模型</strong>（包装——FFmpeg 只当搬运工，把整包数据原样转交系统解码器；
-      如 Android MediaCodec）：整包透传给系统黑盒，<code>skip_frame</code> ❌ 完全无效——
-      丢帧必须发生在<strong>解码之前</strong>（作用点①）。</li>
+    <li><strong>hwaccel 模型</strong>（硬件加速；如 iOS VideoToolbox、VAAPI、NVDEC）：FFmpeg 仍是「主厨」——
+      「读懂码流」照做，只把「重建像素」外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，
+      <code>skip_frame</code> 的丢帧判定就发生在这一步——被丢的 NAL <strong>根本不会提交给硬件</strong>，
+      ✅ 所以生效；</li>
+    <li><strong>wrapper 模型</strong>（包装；如 Android MediaCodec）：两类活<strong>全部在系统解码器
+      内部完成</strong>，FFmpeg 只是「传菜员」——整包压缩数据原样递进去、解码结果端出来，中间不拆开看，
+      连 NAL 都碰不到。<code>skip_frame</code> ❌ 自然无处生效——丢帧只能发生在<strong>解码之前</strong>
+      （作用点①）。</li>
   </ul>
 
   <div class="module" id="m5">
@@ -833,7 +843,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
         <div class="sub4">mediacodecdec.c</div>
         <div class="m5-box">AVPacket<small>demux 输出的 AU</small></div>
         <div class="m5-box">wrapper：整包透传，不拆 NAL<small>源码中没有任何 skip_frame 处理</small></div>
-        <div class="m5-box blackbox">系统 MediaCodec（黑盒）<small>NAL 解析 + 解码都在里面</small></div>
+        <div class="m5-box blackbox">系统 MediaCodec 解码器<small>NAL 解析 + 解码都在内部</small></div>
         <div class="m5-verdict" id="m5-verdict-r" style="color:var(--muted)">—</div>
         <div class="m5-note" id="m5-note-r"></div>
       </div>
@@ -848,7 +858,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
       <div class="tscroll">
         <table class="t">
           <tr><th>层次</th><th>API</th><th>版本</th><th>效果</th></tr>
-          <tr><td>① 解码前丢包</td><td>非参考 AU 不 <code>queueInputBuffer</code></td><td>全版本</td><td>省解码+输出+渲染，首选</td></tr>
+          <tr><td>① 解码前丢包</td><td>非参考帧不 <code>queueInputBuffer</code>（喂给解码器）</td><td>全版本</td><td>省解码+输出+渲染，首选</td></tr>
           <tr><td>③ 解码不输出</td><td><code>BUFFER_FLAG_DECODE_ONLY</code></td><td>API 34+</td><td>参考帧追帧不出帧（专为 seek preroll 设计）</td></tr>
           <tr><td>④ 输出不渲染</td><td><code>releaseOutputBuffer(index, false)</code></td><td>全版本</td><td>省 updateTexImage + GL</td></tr>
         </table>
@@ -887,8 +897,7 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime *
 VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
 
 <span class="cm">/* 离线/追帧场景：允许系统按吞吐优先调度 */</span>
-VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
-                     kCFBooleanFalse);</code></pre>
+VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFalse);</code></pre>
       </div>
     </div>
   </div>
@@ -957,7 +966,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
         封装器不写就没有；判定逻辑要有 NAL 头解析兜底。</div>
     </div></div>
     <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 05</div><div class="t">MediaCodec 上 skip_frame 无效</div><div class="cue">点击翻面 ↻</div></div>
+      <div class="face front"><div class="no">PITFALL 05</div><div class="t">Android MediaCodec 上 skip_frame 无效</div><div class="cue">点击翻面 ↻</div></div>
       <div class="face back">wrapper 模型不拆 NAL，FFmpeg 的 <code>skip_frame</code> 设了也白设；
         丢帧必须发生在 <code>queueInputBuffer</code> 之前。</div>
     </div></div>
@@ -982,7 +991,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
   <ul>
     <li><strong>FFmpeg 软解 / hwaccel 模型</strong>：原生支持——
       <code>skip_frame = AVDISCARD_NONREF</code>，丢弃发生在 NAL 解析层，硬件无感；</li>
-    <li><strong>MediaCodec 这类 wrapper</strong>：不支持——但也不需要：非参考帧的定义保证了
+    <li><strong>Android MediaCodec 这类 wrapper</strong>：不支持——但也不需要：非参考帧的定义保证了
       「解码前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节；</li>
     <li><strong>解码前丢不掉的参考帧</strong>：用「解码不输出」（<code>DECODE_ONLY</code> /
       <code>DoNotOutputFrame</code>）和「输出不渲染」（<code>releaseOutputBuffer(false)</code>）
@@ -991,7 +1000,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
   <h3>Q2 · 参考帧与 I/B/P 的关系？</h3>
   <ul>
     <li><strong>互相独立的两个属性</strong>：<code>slice_type</code> 决定 I/B/P（怎么预测自己），
-      NAL 头决定参考性（是否被引用）；</li>
+      NAL 头决定参考性（是否被参考）；</li>
     <li><strong>判定</strong>：H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型的
       <code>_N</code> 后缀（偶数）；</li>
     <li>B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧——
@@ -1013,7 +1022,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime,
       <tr><td>filter_units BSF discard 选项</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251" target="_blank" rel="noopener"><code>libavcodec/bsf/filter_units.c:251</code></a></td></tr>
       <tr><td>CBS 丢弃判定（H.264/H.265）</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647" target="_blank" rel="noopener"><code>libavcodec/cbs_h264.c:647</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660" target="_blank" rel="noopener"><code>libavcodec/cbs_h265.c:660</code></a></td></tr>
       <tr><td>MP4 sdtp → DISPOSABLE flag</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806" target="_blank" rel="noopener"><code>libavformat/mov.c:11806</code></a></td></tr>
-      <tr><td>MediaCodec 渲染控制 API</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>libavcodec/mediacodec.h:86</code></a></td></tr>
+      <tr><td>Android MediaCodec 渲染控制 API</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>libavcodec/mediacodec.h:86</code></a></td></tr>
     </table>
   </div>
 </section>
@@ -1037,7 +1046,7 @@ const C = {
   key: '#818cf8', ref: '#34d399', nonref: '#fb923c',
   bad: '#f87171', warn: '#fbbf24', accent: '#22d3ee', dim: '#39415a',
 };
-/* 显示顺序 I0 B1 B2 B3 P4（bf=3 + b-pyramid 单组）；dec = 解码顺序；deps = 引用了谁 */
+/* 显示顺序 I0 B1 B2 B3 P4（bf=3 + b-pyramid 单组）；dec = 解码顺序；deps = 参考了谁 */
 const GOP = [
   { id:'I0', t:'I', ref:true,  key:true,  deps:[],          dec:0 },
   { id:'B1', t:'B', ref:false, key:false, deps:['I0','B2'], dec:3 },
@@ -1392,7 +1401,7 @@ function visLoop(el, tick) {
       } else {
         c.verdict.textContent = '❌ skip_frame 无效';
         c.verdict.style.color = CL.bad;
-        c.note.textContent = 'NAL 原样进黑盒 → 只能在解码前自己丢包';
+        c.note.textContent = 'NAL 原样进系统解码器 → 只能在解码前自己丢包';
       }
     }
   }
@@ -1470,10 +1479,10 @@ function visLoop(el, tick) {
   const STEPS = [
     { n: 'seek', l: 0, d: '<b>① 定位</b>：av_seek_frame(BACKWARD) 按容器里的关键帧索引表（MP4 的 stss/sidx，记录哪些帧是关键帧）回退到 ≤ 目标 B3 的关键帧 <b>I0</b>。' },
     { n: 'flush', l: 1, d: '<b>② flush</b>：清空解码器内部状态与 DPB，准备从 I0 重新建立参考链。' },
-    { n: 'read', l: 2, d: '<b>③ 追帧开始</b>：设 skip_frame=NONREF（软解/hwaccel 路径下②生效；MediaCodec 则靠下面的①）。以下按<b>解码顺序</b>读包：I0 → P4 → B2 → B1 → B3。' },
+    { n: 'read', l: 2, d: '<b>③ 追帧开始</b>：设 skip_frame=NONREF（软解/hwaccel 路径下②生效；Android MediaCodec 则靠下面的①）。以下按<b>解码顺序</b>读包：I0 → P4 → B2 → B1 → B3。' },
     { n: 'feed', l: 6, d: '<b>I0</b>（IDR，参考）：喂入解码，preroll 内可带 DECODE_ONLY——解码入 DPB 但不出帧。', mark: [['I0', 'decoded', '解码✓']] },
     { n: 'feed', l: 6, d: '<b>P4</b>（参考 P，第 0 层锚点）：显示顺序在目标 B3 <b>之后</b>，但 B2/B3 都依赖它——解码顺序在前，必须先解。', mark: [['P4', 'decoded', '解码✓']] },
-    { n: 'feed', l: 6, d: '<b>B2</b>（<b>参考 B</b>，金字塔第 1 层·中间参考层）：不能丢！B1/B3 引用它。「丢 B 帧」策略在这里翻车。', mark: [['B2', 'decoded', '解码✓']] },
+    { n: 'feed', l: 6, d: '<b>B2</b>（<b>参考 B</b>，金字塔第 1 层·中间参考层）：不能丢！B1/B3 参考它。「丢 B 帧」策略在这里翻车。', mark: [['B2', 'decoded', '解码✓']] },
     { n: 'drop', l: 4, d: '<b>B1</b>（非参考，pts&lt;target）：<b>① 整包丢弃</b>，解码器根本不知道它存在过。H.264 看 ref_idc==0，H.265 看 _N。', mark: [['B1', 'dropped', '丢包①']] },
     { n: 'drop', l: 4, warn: true, d: '<b>⚠️ HEVC 分支</b>：若关键帧是 CRA（open-GOP），其后的 RASL 帧参考了上一个 GOP、此时并没有解码的帧，解不出来，<b>必须</b>在①丢弃——这是正确性要求，不是优化。' },
     { n: 'feed', l: 6, d: '<b>B3 = 目标帧</b>：它虽是非参考帧，但要显示它就必须解码它——不带 DECODE_ONLY，正常解码输出。', mark: [['B3', 'decoded', '解码✓']] },
@@ -1740,7 +1749,7 @@ function visLoop(el, tick) {
           if (id) {
             const f = GOP_BY_ID[id];
             const by = GOP.filter(x => x.deps.includes(id)).map(x => x.id);
-            info.textContent = `${id} · ${subOf(f)} · 引用[${f.deps.join(',') || '无'}] · 被引用[${by.join(',') || '无'}]`;
+            info.textContent = `${id} · ${subOf(f)} · 参考[${f.deps.join(',') || '无'}] · 被参考[${by.join(',') || '无'}]`;
             info.style.display = 'block';
           } else info.style.display = 'none';
           renderer.domElement.style.cursor = id ? 'pointer' : 'grab';
@@ -1972,8 +1981,15 @@ function visLoop(el, tick) {
     let spawnT = 0, gi = 0;
     const SPEED = 2.1;
     function killAt(cube) { cube.mode = 'fall'; cube.vy = 0.4; }
+    /* 销毁方块：连同帧号标签的材质/贴图一起释放，避免长时间运行泄漏 */
+    function disposeCube(c) {
+      scene.remove(c.mesh);
+      c.mesh.children.forEach(ch => { ch.material.map && ch.material.map.dispose(); ch.material.dispose(); });
+      c.mesh.material.dispose();
+    }
     const m4api = { renderer, camera, container };
-    visLoop(container, (dt, t) => {
+    /* 逐帧逻辑抽成具名函数：visLoop 驱动之外，也供 __m4.step 无头驱动验证 */
+    const step = (dt, t) => {
       fitRenderer(m4api);
       controls.update();
       spawnT -= dt;
@@ -1984,8 +2000,13 @@ function visLoop(el, tick) {
         const m = new THREE.Mesh(cubeGeo, new THREE.MeshStandardMaterial({
           color: col, emissive: col, emissiveIntensity: 0.3, transparent: true, roughness: 0.5 }));
         m.position.set(-7.6, 0.65, 0);
+        /* 帧号标签：Sprite 永远面向相机；放在方块正上方（y 轴上），不受自转影响 */
+        const idLbl = makeLabelSprite([{ text: f.id, y: 46, size: 40, bold: true, mono: true,
+          color: '#' + col.getHexString() }], 0.62, 0.31, { w: 128, h: 64 });
+        idLbl.position.set(0, 0.52, 0);
+        m.add(idLbl);
         scene.add(m);
-        cubes.push({ mesh: m, f, mode: 'run', vy: 0, corrupt: false });
+        cubes.push({ mesh: m, f, mode: 'run', vy: 0, corrupt: false, decoded: false });
       }
       for (let i = cubes.length - 1; i >= 0; i--) {
         const c = cubes[i], m = c.mesh, px = m.position.x;
@@ -1994,11 +2015,15 @@ function visLoop(el, tick) {
           const crossed = X => px < X && nx >= X;
           if (crossed(G1X) && sw.g1.checked && !c.f.ref) killAt(c);
           if (c.mode === 'run' && crossed(DEC_IN)) {
-            if ((ladder >= 8 && !c.f.ref) || (ladder >= 16 && c.f.t === 'B') || (ladder >= 32 && !c.f.key)) killAt(c);
+            /* NONREF：丢非参考帧；BIDIR：演示只丢参考 B（B2），故意放行 B1/B3
+               让它们因参考缺失而花屏（FFmpeg 实际会把所有 B 一并丢弃）；NONKEY：只留关键帧 */
+            if ((ladder >= 8 && ladder < 16 && !c.f.ref) ||
+                (ladder >= 16 && ladder < 32 && c.f.t === 'B' && c.f.ref) ||
+                (ladder >= 32 && !c.f.key)) killAt(c);
           }
           if (c.mode === 'run' && crossed(DEC_OUT)) {
+            c.decoded = true; /* 解码完成：压缩包 → 原始画面帧，方块随后放大示意 */
             /* BIDIR 丢了参考 B → 依赖帧解码出错（花屏） */
-            if (ladder >= 16 && ladder < 32 && CORRUPT_BIDIR.has(c.f.id) && c.f.ref === false) c.corrupt = true;
             if (ladder >= 16 && ladder < 32 && CORRUPT_BIDIR.has(c.f.id)) c.corrupt = true;
             if (c.corrupt) { m.material.color.set(C.bad); m.material.emissive.set(C.bad); }
           }
@@ -2007,17 +2032,21 @@ function visLoop(el, tick) {
           if (c.mode === 'run') {
             m.position.x = nx;
             m.rotation.y += dt * 1.2;
+            /* 已解码的帧平滑放大到 1.4 倍 */
+            const ts = c.decoded ? 1.4 : 1;
+            if (Math.abs(m.scale.x - ts) > 0.01)
+              m.scale.setScalar(m.scale.x + (ts - m.scale.x) * Math.min(1, dt * 6));
             if (c.corrupt && !reduced) m.position.z = Math.sin(t * 25 + i) * 0.06;
             if (nx >= SCR_X - 0.15) {
               screen.material.emissiveIntensity = 1.2; /* 上屏闪一下 */
-              scene.remove(m); m.material.dispose(); cubes.splice(i, 1);
+              disposeCube(c); cubes.splice(i, 1);
             }
           }
         }
         if (c.mode === 'fall') {
           c.vy += dt * 8; m.position.y -= c.vy * dt;
           m.rotation.x += dt * 4; m.material.opacity = Math.max(0, m.material.opacity - dt * 1.4);
-          if (m.position.y < -3) { scene.remove(m); m.material.dispose(); cubes.splice(i, 1); }
+          if (m.position.y < -3) { disposeCube(c); cubes.splice(i, 1); }
         }
       }
       screen.material.emissiveIntensity = Math.max(0.5, screen.material.emissiveIntensity - dt * 1.6);
@@ -2027,7 +2056,9 @@ function visLoop(el, tick) {
         g.door.position.y += (target - g.door.position.y) * Math.min(1, dt * 7);
       }
       renderer.render(scene, camera);
-    });
+    };
+    window.__m4 = { cubes, step };
+    visLoop(container, step);
     scenes.push({ renderer, camera, container, scene });
   }
 

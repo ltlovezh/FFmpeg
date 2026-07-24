@@ -11,7 +11,7 @@ Seek 慢的根源几乎总是同一个：**目标时间点不是关键帧（不�
 自身就能独立解码的帧——视频只能从这种帧开始解），播放器必须退回到前面
 最近的关键帧，把中间所有帧都解码一遍，才能"追"到目标位置**。这段追帧
 过程（行话叫 preroll）的耗时与需要解码的帧数成正比。而其中相当一部分帧
-其实可以不解码——它们不被任何其他帧引用，丢掉不会产生任何画质代价。
+其实可以不解码——它们不被任何其他帧参考，丢掉不会产生任何画质代价。
 
 本文围绕"丢帧"这一个杠杆，把问题讲透：
 
@@ -32,7 +32,7 @@ flowchart LR
     A["1.Seek为什么慢<br/>追帧成本模型"] --> B["2.哪些帧能丢<br/>参考性 ≠ 帧类型"]
     B --> C["3.如何判定<br/>NAL 头 1~2 字节"]
     C --> D["4.在哪里丢<br/>流水线四个作用点"]
-    D --> E["5.硬解落地<br/>MediaCodec / VideoToolbox"]
+    D --> E["5.硬解落地<br/>Android MediaCodec / iOS VideoToolbox"]
     E --> F["6.完整 Seek 流程<br/>与踩坑清单"]
 ```
 
@@ -88,7 +88,7 @@ t_decode ：单帧解码耗时
 
 为此，H.264/H.265 解码器内部维护一小块缓存，叫 **DPB（Decoded Picture
 Buffer，解码图像缓存）**：解码完的帧如果还会被后续帧当参考，就留在 DPB
-里备用；不会被引用的帧输出后立即释放。据此所有帧分成两类：
+里备用；不会被参考的帧输出后立即释放。据此所有帧分成两类：
 
 - **参考帧（reference）**：进 DPB，后续帧依赖它。丢掉它 → 依赖它的帧
   解码出错 → 错误沿参考链逐帧扩散 → 花屏；
@@ -131,7 +131,7 @@ Buffer，解码图像缓存）**：解码完的帧如果还会被后续帧当参
 让它参考 I0 和 P4；再把解码后的 B2 保留在 DPB 中，让两侧的 B1、B3
 继续参考它。于是 B2 虽然仍然是 B 帧——它仍使用两个参考列表预测自己——
 却同时成为了其他 B 帧的参考帧。连续 B 帧更多时还可以继续分层，形成
-"锚点 → 参考 B → 非参考 B"的层级引用结构，因此得名。这里的
+"锚点 → 参考 B → 非参考 B"的层级参考结构，因此得名。这里的
 "pyramid"强调的是**层级依赖**，不表示图形一定只有一个几何尖顶。
 
 下面是一个典型的 mini-GOP（编码参数 `bf=3`，即最多连续 3 个 B 帧，且
@@ -150,7 +150,7 @@ flowchart LR
     class B1,B3 nonref
 ```
 
-再把同样五帧按引用关系分层，就能看到 b-pyramid。为了避免"顶/底"歧义，
+再把同样五帧按参考关系分层，就能看到 b-pyramid。为了避免"顶/底"歧义，
 本文把 I0、P4 所在的基础锚点称为**第 0 层（金字塔底部）**，把 B2 称为
 **第 1 层（中间参考层）**，把 B1、B3 称为**第 2 层（上层叶子）**。
 这里的层号只是解释依赖关系的简化编号，不等同于 HEVC 码流里的
@@ -176,8 +176,8 @@ flowchart TB
   的叶子节点；层号越高，对低层帧的依赖越多；
 - 解码器要先得到作为锚点的 I0、P4，再解码 B2，最后才能解码依赖 B2 的
   B1、B3，所以解码顺序是 `I0 P4 B2 B1 B3`；
-- **B2 是"参考 B"**：B1 和 B3 都引用它，提前丢掉会破坏参考链；
-- B1、B3 没有被其他帧引用，是最高依赖层的叶子 B，可以安全丢弃。
+- **B2 是"参考 B"**：B1 和 B3 都参考它，提前丢掉会破坏参考链；
+- B1、B3 没有被其他帧参考，是最高依赖层的叶子 B，可以安全丢弃。
 
 B-pyramid 让叶子 B 使用距离更近的参考帧，通常能提高压缩效率；代价是
 部分 B 帧变成了参考帧，不能再作为无依赖帧随意丢弃。
@@ -225,8 +225,8 @@ int nal_type =  nal[0] & 0x1F;        /* 5 == IDR slice, 1 == 非 IDR slice */
 - `nal_ref_idc == 0`：本帧不作参考，可安全丢弃；
 - 标准（H.264 7.4.1，`nal_ref_idc` 语义）约束同一帧所有 slice 的
   `nal_ref_idc` 必须一致，
-  且 IDR/SPS/PPS 所在 NAL 必须非 0——所以**读 AU 里第一个 VCL NAL
-  就能判定整帧**。
+  且 IDR/SPS/PPS 所在 NAL 必须非 0——所以**读 AU（Access Unit，访问
+  单元——一帧画面的整包编码数据）里第一个 VCL NAL 就能判定整帧**。
 
 I/B/P 则要再多解析一层 slice header：`slice_type` 是其中第二个字段
 （排在 `first_mb_in_slice` 之后），用指数哥伦布编码（Exp-Golomb，一种
@@ -298,10 +298,10 @@ IRAP（Intra Random Access Point，帧内随机访问点）是 H.265 对各种
 | 类型 | 值 | 含义 |
 | --- | ---: | --- |
 | BLA_W_LP / BLA_W_RADL / BLA_N_LP | 16/17/18 | 拼接产生的断点关键帧 |
-| IDR_W_RADL / IDR_N_LP | 19/20 | 闭 GOP 关键帧（其后的帧绝不引用它之前的内容） |
-| **CRA_NUT** | 21 | **open-GOP 关键帧**（允许跨界引用，压缩率更高） |
+| IDR_W_RADL / IDR_N_LP | 19/20 | 闭 GOP 关键帧（其后的帧绝不参考它之前的内容） |
+| **CRA_NUT** | 21 | **open-GOP 关键帧**（允许跨界参考，压缩率更高） |
 
-所谓 open-GOP（开放式 GOP），指 GOP 之间存在跨界引用：CRA 后面紧跟着
+所谓 open-GOP（开放式 GOP），指 GOP 之间存在跨界参考：CRA 后面紧跟着
 一批"前导帧"（leading picture）——显示时间在 CRA **之前**、解码顺序在
 CRA **之后**的帧。用一段具体序列看会发生什么（数字为显示顺序）：
 
@@ -478,13 +478,13 @@ header 都不解析"。真正的区别只有一句话：**①是"你自己在解
 
 - **① 解码前丢包**：判定（3.3 的 NAL 头检查）和丢弃都由你的应用代码
   完成，解码器完全没参与——所以**任何解码器都能用**，包括没有 `skip_frame`
-  开关的黑盒（Android MediaCodec）。
+  开关的解码器（如 Android MediaCodec）。
 - **② 解码器内跳过**：你只设一个 `skip_frame = AVDISCARD_NONREF`，
   判定和跳过全由解码器内部完成，一行代码搞定——但前提是**解码器支持这个
   开关**。FFmpeg 软解和 hwaccel（VideoToolbox）支持。
 
-一句话选型：**能用 FFmpeg `skip_frame` 就用②（省事，一行代码）；黑盒硬解
-没这个开关，只能用①（通用，自己判定）**。这也是第 5 章要展开的关键差异。
+一句话选型：**能用 FFmpeg `skip_frame` 就用②（省事，一行代码）；Android MediaCodec
+这类硬解没这个开关，只能用①（通用，自己判定）**。这也是第 5 章要展开的关键差异。
 下面逐个展开。
 
 ### 4.1 作用点②：FFmpeg 软解的 `skip_frame`（原生支持）
@@ -546,7 +546,7 @@ if (s->avctx->skip_frame >= AVDISCARD_ALL ||
 
 ### 4.2 作用点①：解码前丢包（硬解通用方案）
 
-硬解码器（MediaCodec、VideoToolbox——对使用者是黑盒：只能喂数据、取
+硬解码器（Android 的 MediaCodec、iOS 的 VideoToolbox——对使用者是黑盒：只能喂数据、取
 结果，无法干预内部行为）没有 `skip_frame` 这样的开关，但这不重要——
 **非参考帧的定义本身就保证了解码器不需要它**。在 demux（解封装）之后、
 喂入解码器之前把整包丢掉，解码器完全无感：
@@ -556,7 +556,7 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
                         │
                        喂入
                         ▼
-              MediaCodec / VideoToolbox
+        Android MediaCodec / iOS VideoToolbox
 ```
 
 三种实现，按工程成本排序：
@@ -606,17 +606,29 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 ### 5.1 关键架构差异：hwaccel 模型 vs wrapper 模型
 
-FFmpeg 接入硬解有两种完全不同的模型：**hwaccel 模型**（hardware
-acceleration，硬件加速——FFmpeg 的软解码器照常拆包、解析 NAL 和各级
-header，只把最重的像素级计算交给硬件）和 **wrapper 模型**（包装——
-FFmpeg 只当搬运工，把整包数据原样转交给系统解码器）。`skip_frame` 在
-两者上的行为截然不同——这是本文最值得记住的工程结论之一：
+先补一个背景：解码一帧其实包含两类活——**"读懂码流"**（解析各级
+头部、搞清帧类型和参考关系，轻量的逻辑活）和**"重建像素"**（拿参考帧
+加差异数据把整幅画面算出来，真正吃算力的活）。FFmpeg 接入硬解的两种
+模型，区别就在**这两类活分别由谁干**：
+
+- **hwaccel 模型**（hardware acceleration，硬件加速；如 iOS 的
+  VideoToolbox、VAAPI、NVDEC）：FFmpeg 仍是"主厨"——"读懂码流"照做，
+  只把"重建像素"外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，
+  `skip_frame` 的丢帧判定就发生在这一步——被丢的 NAL 根本不会提交给
+  硬件，所以生效；
+- **wrapper 模型**（包装；如 Android 的 MediaCodec）：两类活全部在
+  系统解码器内部完成，FFmpeg 只是"传菜员"——整包压缩数据原样递进去、
+  解码结果端出来，中间不拆开看，连 NAL 都碰不到。`skip_frame` 自然
+  无处生效——丢帧只能发生在解码之前（作用点①）。
+
+`skip_frame` 在两者上的行为截然不同——这是本文最值得记住的工程结论
+之一：
 
 ```mermaid
 flowchart TB
-    subgraph W["wrapper 模型（MediaCodec）"]
+    subgraph W["wrapper 模型（Android MediaCodec）"]
         P2["AVPacket"] --> M1["mediacodecdec.c<br/>整包透传，不拆 NAL"]
-        M1 --> M2["系统 MediaCodec<br/>（黑盒：NAL解析+解码）"]
+        M1 --> M2["系统 MediaCodec 解码器<br/>（NAL 解析+解码都在内部）"]
         M2 --> M3["输出 buffer"]
     end
     subgraph H["hwaccel 模型（VideoToolbox / VAAPI / NVDEC）"]
@@ -632,7 +644,7 @@ flowchart TB
 | 模型 | 例子 | `skip_frame=NONREF` | 原因 |
 | --- | --- | --- | --- |
 | hwaccel | **VideoToolbox**、VAAPI（Linux）、D3D11VA（Windows）、NVDEC（NVIDIA） | ✅ 生效 | NAL 解析和丢弃决策在 FFmpeg 软件层完成，[`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) 的 `continue` 发生在任何 hwaccel 回调之前，被丢的 NAL 根本不会提交给硬件 |
-| wrapper | **MediaCodec**（`mediacodecdec.c`） | ❌ 不生效 | 整包透传给系统解码器，FFmpeg 不拆 NAL；wrapper 源码中没有任何 `skip_frame` 处理 |
+| wrapper | **Android MediaCodec**（`mediacodecdec.c`） | ❌ 不生效 | 整包透传给系统解码器，FFmpeg 不拆 NAL；wrapper 源码中没有任何 `skip_frame` 处理 |
 
 所以：**iOS 上走 FFmpeg + videotoolbox hwaccel，设置
 `skip_frame = AVDISCARD_NONREF` 一行代码就完成了解码前丢帧；Android
@@ -642,7 +654,7 @@ MediaCodec 必须在解码前自己丢（4.2）**。
 
 | 层次 | API | 版本 | 效果 |
 | --- | --- | --- | --- |
-| ① 解码前丢包 | 非参考 AU 不 `queueInputBuffer`（判定见 3.3） | 全版本 | 省解码+输出+渲染，首选 |
+| ① 解码前丢包 | 非参考帧不 `queueInputBuffer`（喂给解码器；判定见 3.3） | 全版本 | 省解码+输出+渲染，首选 |
 | ③ 解码不输出 | `BUFFER_FLAG_DECODE_ONLY` | API 34+ | 参考帧追帧不出帧 |
 | ④ 输出不渲染 | `releaseOutputBuffer(index, false)` | 全版本 | 省 `updateTexImage`+GL |
 
@@ -749,13 +761,13 @@ while (read_and_decode(&frame)) {
 1. **"丢 B 帧" ≠ "丢非参考帧"**。x264/x265 默认开 b-pyramid，参考 B 占
    B 帧的约一半；按 `pict_type` 丢帧必花屏，必须按 NAL 头判参考性。
 2. **HEVC open-GOP：CRA + RASL**。Seek 到 CRA 后，其后的 RASL 帧
-   （类型 8/9）引用了不存在的前向参考，必须丢弃——这是正确性问题，
+   （类型 8/9）参考了 CRA 之前、此刻并没有解码的帧，必须丢弃——这是正确性问题，
    不丢会花屏。闭 GOP（IDR）流无此问题。
 3. **HEVC 时域分层**。`_N` 严格含义是"同子层非参考"；单时域层流
    （绝大多数点播）可无脑丢，多时域层流只保证最高层 `_N` 绝对安全。
 4. **`AV_PKT_FLAG_DISPOSABLE` 不保证存在**。它来自 MP4 的 `sdtp` box，
    封装器不写就没有；判定逻辑要有 NAL 头解析兜底。
-5. **MediaCodec 上设置 FFmpeg 的 `skip_frame` 无效**。wrapper 模型不拆
+5. **Android MediaCodec 上设置 FFmpeg 的 `skip_frame` 无效**。wrapper 模型不拆
    NAL；丢帧必须发生在 `queueInputBuffer` 之前。
 6. **`AVDISCARD_BIDIR` 及以上会断参考链**。追帧只用 `NONREF`；更激进的
    档位只配合"丢到下一个关键帧"的策略使用。
@@ -769,7 +781,7 @@ while (read_and_decode(&frame)) {
 **丢非参考帧，解码器支持吗？**
 FFmpeg 软解和 hwaccel 模型（VideoToolbox 等）原生支持
 （`skip_frame = AVDISCARD_NONREF`，丢弃发生在 NAL 解析层，硬件无感）；
-MediaCodec 这类 wrapper/黑盒解码器不支持——但也不需要支持：非参考帧的
+Android MediaCodec 这类 wrapper 模型解码器不支持——但也不需要支持：非参考帧的
 定义保证了"解码前丢包"与"解码器内跳过"效果完全等价。判定只需读 NAL
 头 1~2 字节。解码前丢不掉的（参考帧），用"解码不输出"
 （`BUFFER_FLAG_DECODE_ONLY` / `kVTDecodeFrame_DoNotOutputFrame`）和
@@ -777,7 +789,7 @@ MediaCodec 这类 wrapper/黑盒解码器不支持——但也不需要支持：
 
 **参考帧与 I/B/P 的关系？**
 正交的两个维度：`slice_type` 决定 I/B/P（怎么预测自己），NAL 头决定参考性
-（是否被别人引用）。H.264 看 `nal_ref_idc == 0`，H.265 看 VCL 类型的
+（是否被别人参考）。H.264 看 `nal_ref_idc == 0`，H.265 看 VCL 类型的
 `_N` 后缀（偶数）；B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧。
 安全丢帧的唯一判据是参考性，不是帧类型。
 
@@ -796,5 +808,5 @@ MediaCodec 这类 wrapper/黑盒解码器不支持——但也不需要支持：
 | filter_units BSF discard 选项 | [`libavcodec/bsf/filter_units.c:251`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251) |
 | CBS 丢弃判定（H.264/H.265） | [`libavcodec/cbs_h264.c:647`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647)、[`libavcodec/cbs_h265.c:660`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660) |
 | MP4 sdtp → DISPOSABLE flag | [`libavformat/mov.c:11806`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806) |
-| MediaCodec 渲染控制 API | [`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86) |
+| Android MediaCodec 渲染控制 API | [`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86) |
 | skip_frame 命令行选项表 | [`libavcodec/options_table.h:260`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/options_table.h#L260) |
