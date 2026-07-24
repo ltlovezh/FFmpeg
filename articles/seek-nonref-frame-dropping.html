@@ -707,8 +707,20 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
 <!-- ==================== CH 4 ==================== -->
 <section class="chapter" id="ch4">
   <div class="chap-head"><span class="no">04</span><h2>在哪里丢：流水线上的四个作用点</h2></div>
-  <p class="lead">同一帧可以在流水线四个位置被丢掉，<strong>越早丢省得越多</strong>。
-    ①② 只能丢非参考帧但收益最大；③④ 能丢任何帧（解码照做、只是不出去），是精确 Seek 的兜底。</p>
+  <p class="lead">先把播放流水线拆成四段，看一帧从磁盘到屏幕要走哪些路：</p>
+  <ul>
+    <li><strong>Demux（解封装）</strong>：从文件/流里拆出一个个压缩数据包（<code>AVPacket</code>）；</li>
+    <li><strong>解码</strong>：解码器把压缩数据还原成一帧原始画面（YUV 像素）；</li>
+    <li><strong>输出</strong>：解码器把这帧原始画面「交货」给应用层——让你的代码拿到一个能用的帧对象。
+      软解要把像素从解码器内部缓冲<strong>拷贝</strong>出来；硬解要把 GPU 里的解码结果跨进程/跨层<strong>流转</strong>出来、
+      触发回调。<strong>注意这一步只是把帧递到你手上，画面还没显示</strong>；</li>
+    <li><strong>渲染/上屏</strong>：应用拿到帧后，真正把它<strong>画到屏幕</strong>上（纹理上传 + GL 绘制）。</li>
+  </ul>
+  <p>关键是分清<strong>「输出」和「渲染」是两件事</strong>：「输出」是解码器交货、你拿到这帧数据；
+    「渲染」是把这帧数据画到屏幕。正因为可以「拿到但不画」、甚至「解了但不交货」，
+    丢帧才有了下面 ③ 和 ④ 两个额外的作用点。同一帧可以在这条流水线的四个位置被丢掉，
+    <strong>越早丢省得越多</strong>：①② 只能丢非参考帧但收益最大；③④ 能丢任何帧
+    （解码照做、只是不出去），是精确 Seek 的兜底。</p>
 
   <div class="module" id="m4">
     <div class="m-head">
@@ -765,6 +777,20 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
         <tr><td>④ 输出不渲染</td><td>仅渲染（纹理上传/GL）</td><td>任何帧</td><td>无</td></tr>
       </table>
     </div>
+    <p style="margin-top:16px"><strong>①和②有什么不一样？</strong> 表格里这两行「省掉的成本」几乎写的一样，
+      容易让人以为是一回事。其实两者效果确实几乎相同——都省掉了「解码 + 输出 + 渲染」，因为②虽然把包喂进了
+      解码器，却在 NAL 遍历的第一步就跳过、「连 slice header 都不解析」。真正的区别只有一句话：
+      <strong>①是「你自己在喂入前丢」，②是「让解码器帮你丢」</strong>。</p>
+    <ul>
+      <li><strong>① 喂入前丢包</strong>：判定（上面的 NAL 头检查）和丢弃都由你的应用代码完成，
+        解码器完全没参与——所以<strong>任何解码器都能用</strong>，包括没有 <code>skip_frame</code> 开关的
+        黑盒（Android MediaCodec）；</li>
+      <li><strong>② 解码器内跳过</strong>：你只设一个 <code>skip_frame = AVDISCARD_NONREF</code>，
+        判定和跳过全由解码器内部完成，一行代码搞定——但前提是<strong>解码器支持这个开关</strong>
+        （FFmpeg 软解和 hwaccel / VideoToolbox 支持）。</li>
+    </ul>
+    <p>一句话选型：<strong>能用 FFmpeg <code>skip_frame</code> 就用②（省事，一行代码）；黑盒硬解没这个开关，
+      只能用①（通用，自己判定）</strong>。这也是第 5 章要展开的关键差异。</p>
     <div class="note">软解追帧还可叠加：<code>skip_loop_filter = AVDISCARD_NONREF</code>
       ——跳过去块滤波（解码末尾消除块状压缩痕迹的滤波步骤）。NONREF 档只跳非参考帧的，零风险；
       设 ALL 收益更大，但参考帧的误差会沿参考链逐帧累积（「漂移」）。另可加
