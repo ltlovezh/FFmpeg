@@ -780,9 +780,9 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
     <p style="margin-top:16px"><strong>①和②有什么不一样？</strong> 表格里这两行「省掉的成本」几乎写的一样，
       容易让人以为是一回事。其实两者效果确实几乎相同——都省掉了「解码 + 输出 + 渲染」，因为②虽然把包喂进了
       解码器，却在 NAL 遍历的第一步就跳过、「连 slice header 都不解析」。真正的区别只有一句话：
-      <strong>①是「你自己在喂入前丢」，②是「让解码器帮你丢」</strong>。</p>
+      <strong>①是「你自己在解码前丢」，②是「让解码器帮你丢」</strong>。</p>
     <ul>
-      <li><strong>① 喂入前丢包</strong>：判定（上面的 NAL 头检查）和丢弃都由你的应用代码完成，
+      <li><strong>① 解码前丢包</strong>：判定（上面的 NAL 头检查）和丢弃都由你的应用代码完成，
         解码器完全没参与——所以<strong>任何解码器都能用</strong>，包括没有 <code>skip_frame</code> 开关的
         黑盒（Android MediaCodec）；</li>
       <li><strong>② 解码器内跳过</strong>：你只设一个 <code>skip_frame = AVDISCARD_NONREF</code>，
