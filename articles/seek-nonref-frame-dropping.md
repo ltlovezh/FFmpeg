@@ -17,7 +17,7 @@ Seek 慢的根源几乎总是同一个：**目标时间点不是关键帧（不�
 
 1. 哪些帧可以安全地丢？——参考帧与 I/B/P 的真实关系；
 2. 怎么在不解码的前提下判定一帧是否可丢？——只看 H.264/H.265 码流
-   "包裹标签"（NAL 头，第 3 章有背景介绍）的 1~2 个字节；
+   "包裹标签"（NAL 头，[第 3 章](#3-如何判定nal-头-12-字节就够了)有背景介绍）的 1~2 个字节；
 3. 在哪里丢？——从 FFmpeg 软解（用 CPU 跑解码）到 Android 的
    MediaCodec、iOS 的 VideoToolbox（两大移动平台的系统硬解接口，
    解码交给芯片里的专用硬件），丢帧可以发生在流水线的四个不同位置，
@@ -109,7 +109,7 @@ Buffer，解码图像缓存）**：解码完的帧如果还会被后续帧当参
   的说明信息）。
 - **参考性描述"当前帧是否会被别人参考"**：参考帧解码后要留在 DPB 中
   给后来的帧当底子；非参考帧输出后立即释放。H.264/H.265 把这个信息写在
-  NAL 头中（第 3 章展开）。
+  NAL 头中（[第 3 章](#3-如何判定nal-头-12-字节就够了)展开）。
 
 换句话说，I/B/P 回答"**它需要谁**"，参考性回答"**以后谁需要它**"。
 一个说的是当前帧的输入，一个说的是当前帧会不会成为别人的输入，二者
@@ -118,7 +118,7 @@ Buffer，解码图像缓存）**：解码完的帧如果还会被后续帧当参
 | | 参考帧 | 非参考帧 |
 | --- | --- | --- |
 | **I** | IDR（标准规定必为参考）、普通 I | 理论存在，实践罕见 |
-| **P** | 绝大多数 P | 少见（低延迟/时域分层编码会出现，见 3.2 ①） |
+| **P** | 绝大多数 P | 少见（低延迟/时域分层编码会出现，见 [3.2](#32-h265看-nal_unit_type-的奇偶) ①） |
 | **B** | **B-pyramid 的中层 B（主流编码器 x264/x265 默认开启）** | 最常见的可丢帧 |
 
 #### B-pyramid：为什么 B 帧也能成为参考帧
@@ -247,7 +247,7 @@ parser 的完整用法在 [`libavcodec/h264_parser.c:364`](https://github.com/FF
 关键帧判定除了 `nal_unit_type == 5`（IDR），还要认 **recovery point
 SEI**：有些流的关键帧不是 IDR，而是用这种 SEI 消息标出"从这里进入、
 播放若干帧后画面可完全恢复"的位置（多见于 open-GOP 流，open-GOP 的
-含义见 3.2 ②；FFmpeg 的处理在 [`libavcodec/h264_parser.c:366`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L366)）。
+含义见 [3.2](#32-h265看-nal_unit_type-的奇偶) ②；FFmpeg 的处理在 [`libavcodec/h264_parser.c:366`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_parser.c#L366)）。
 
 ### 3.2 H.265：看 `nal_unit_type` 的奇偶
 
@@ -367,13 +367,13 @@ static int packet_droppable(const uint8_t *data, int size,
 }
 ```
 
-由 3.1/3.2 的"同帧一致性"约束，扫到包里第一个 VCL NAL 就能下结论——
+由 [3.1](#31-h264看-nal_ref_idc)/[3.2](#32-h265看-nal_unit_type-的奇偶) 的"同帧一致性"约束，扫到包里第一个 VCL NAL 就能下结论——
 前面最多跳过几个 SPS/PPS/SEI 这样的小单元。整个判定只读几个字节、不
 复制任何数据，耗时可以忽略不计。
 
 ### 3.4 不想碰码流：三个现成的判定层
 
-不想自己写 3.3 那样的 NAL 解析？FFmpeg 在三个不同阶段已经把"这一帧是
+不想自己写 [3.3](#33-判定代码一个包au能不能整包丢) 那样的 NAL 解析？FFmpeg 在三个不同阶段已经把"这一帧是
 什么"的答案算好了，按付出的成本从低到高：
 
 - **容器层——读包上的现成标记，零成本**。MP4 有个可选的 `sdtp` box
@@ -422,7 +422,7 @@ static int packet_droppable(const uint8_t *data, int size,
   ```
 
   此时解码成本已经花掉，这条路只能服务"解码后丢帧"的场景（比如
-  作用点④的不渲染判定），省不了解码本身。
+  [作用点④](#44-作用点输出但不渲染最后的兜底)的不渲染判定），省不了解码本身。
 
 ---
 
@@ -462,10 +462,10 @@ flowchart LR
 
 | 作用点 | 省掉的成本 | 适用帧 | 依赖 |
 | --- | --- | --- | --- |
-| ① 解码前丢包 | 解码 + 输出 + 渲染，全省 | 仅非参考帧 | 无（任何解码器都可用） |
-| ② 解码器内跳过 | 同上（省掉 slice 解码） | 仅非参考帧（NONREF 级） | 解码器支持 `skip_frame` |
-| ③ 解码不输出 | 输出拷贝/回调 + 渲染 | **任何帧**（参考链由解码器维持） | 平台 API 支持 |
-| ④ 输出不渲染 | 仅渲染（纹理上传/GL） | 任何帧 | 无 |
+| [① 解码前丢包](#42-作用点解码前丢包硬解通用方案) | 解码 + 输出 + 渲染，全省 | 仅非参考帧 | 无（任何解码器都可用） |
+| [② 解码器内跳过](#41-作用点ffmpeg-软解的-skip_frame原生支持) | 同上（省掉 slice 解码） | 仅非参考帧（NONREF 级） | 解码器支持 `skip_frame` |
+| [③ 解码不输出](#43-作用点解码但不输出追参考帧时的兜底) | 输出拷贝/回调 + 渲染 | **任何帧**（参考链由解码器维持） | 平台 API 支持 |
+| [④ 输出不渲染](#44-作用点输出但不渲染最后的兜底) | 仅渲染（纹理上传/GL） | 任何帧 | 无 |
 
 ①② 只能丢非参考帧，但收益最大；③④ 能丢任何帧（包括参考帧——因为解码
 照常做，只是不出去），是精确 Seek 追帧的兜底手段。
@@ -476,15 +476,15 @@ flowchart LR
 header 都不解析"。真正的区别只有一句话：**①是"你自己在解码前丢"，
 ②是"让解码器帮你丢"**。
 
-- **① 解码前丢包**：判定（3.3 的 NAL 头检查）和丢弃都由你的应用代码
+- **[① 解码前丢包](#42-作用点解码前丢包硬解通用方案)**：判定（[3.3](#33-判定代码一个包au能不能整包丢) 的 NAL 头检查）和丢弃都由你的应用代码
   完成，解码器完全没参与——所以**任何解码器都能用**，包括没有 `skip_frame`
   开关的解码器（如 Android MediaCodec）。
-- **② 解码器内跳过**：你只设一个 `skip_frame = AVDISCARD_NONREF`，
+- **[② 解码器内跳过](#41-作用点ffmpeg-软解的-skip_frame原生支持)**：你只设一个 `skip_frame = AVDISCARD_NONREF`，
   判定和跳过全由解码器内部完成，一行代码搞定——但前提是**解码器支持这个
   开关**。FFmpeg 软解和 hwaccel（VideoToolbox）支持。
 
 一句话选型：**能用 FFmpeg `skip_frame` 就用②（省事，一行代码）；Android MediaCodec
-这类硬解没这个开关，只能用①（通用，自己判定）**。这也是第 5 章要展开的关键差异。
+这类硬解没这个开关，只能用①（通用，自己判定）**。这也是[第 5 章](#5-硬解落地四种组合各自怎么丢帧)要展开的关键差异。
 下面逐个展开。
 
 ### 4.1 作用点②：FFmpeg 软解的 `skip_frame`（原生支持）
@@ -562,7 +562,7 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 三种实现，按工程成本排序：
 
 1. **容器 flag**：`pkt->flags & AV_PKT_FLAG_DISPOSABLE`，有 `sdtp` 时零成本；
-2. **自解析 NAL 头**：3.3 的函数，~30 行，无依赖，推荐兜底方案；
+2. **自解析 NAL 头**：[3.3](#33-判定代码一个包au能不能整包丢) 的函数，~30 行，无依赖，推荐兜底方案；
 3. **FFmpeg 现成 BSF**（bitstream filter，码流过滤器：不解码，直接对
    压缩码流做删改）：`filter_units` 的 `discard` 选项
    （[`libavcodec/bsf/filter_units.c:251`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251)），判定逻辑与解码器一致——H.264 按
@@ -588,17 +588,85 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 ### 4.4 作用点④：输出但不渲染（最后的兜底）
 
-解码输出已经拿到，只是不上屏。省掉的是把解码结果送上 GPU 并画出来的
-开销（纹理上传 + OpenGL 绘制；Android 上即
-`SurfaceTexture.updateTexImage` + OES 纹理转 2D 纹理那一段）：
+解码输出已经拿到，只是不上屏。先看清楚"渲染"到底包含哪几步——只有知道
+省的是什么，才知道这一层值不值：
 
-- **Android**：`releaseOutputBuffer(index, /*render=*/false)`；
-  FFmpeg wrapper 对应 `av_mediacodec_release_buffer(buffer, 0)`
-  （[`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86)）；
-- **iOS**：拿到 `CVPixelBuffer` 后直接释放，不送显示层。
+1. 把帧的像素**传给 GPU**（软解要 `glTexImage2D` 上传几 MB；硬解要把
+   解码器的输出 buffer 绑成纹理）；
+2. 用 shader **画一遍**（顺带做 YUV→RGB 颜色转换、缩放）；
+3. **提交上屏**（`eglSwapBuffers` / `presentDrawable`，再交给系统合成器）。
 
-这一层永远可用，也是所有播放器精确 Seek 的"最后一公里"：解码输出的
-`pts + duration ≤ target` 的帧全部走这条路。
+**不渲染 = 拿到帧之后一步都不做，直接把这块 buffer 还回去。** 三种解码
+方式的"还"法如下——注意关键不在丢，而在**必须还**：解码器的输出 buffer
+是固定几个循环复用的，忘了还，池子耗尽，解码线程就卡死了（"丢帧反而更
+慢"多半是这里出的问题）。
+
+**FFmpeg 软解**——`avcodec_receive_frame()` 拿到的 `AVFrame` 里是 CPU
+内存中的 YUV。不渲染就是**不把它塞进渲染队列**，直接 `av_frame_unref()`
+让引用计数归零、内存回到 FFmpeg 的缓冲池：
+
+```c
+while (avcodec_receive_frame(avctx, frame) == 0) {
+    if (frame->pts + frame->duration <= target_pts) {
+        av_frame_unref(frame);   /* 追帧区间：拿到就还，不进渲染队列 */
+        continue;
+    }
+    render(frame);               /* 追上目标，正常上屏 */
+}
+```
+
+**Android MediaCodec**——输出 buffer 必须用 `releaseOutputBuffer()`
+交还，这个函数的第二个参数就是"要不要渲染"：
+
+```java
+// 追帧区间：还回去，但不送 Surface
+codec.releaseOutputBuffer(outIndex, false);
+// 追上目标：还回去，并送 Surface 显示
+codec.releaseOutputBuffer(outIndex, true);
+```
+
+传 `false` 时这一帧根本不会到达 Surface，也就不会触发
+`SurfaceTexture.onFrameAvailable` → `updateTexImage()`（把最新一帧绑到
+OES 纹理）→ OES 转 2D 纹理的绘制 → 合成上屏这一整串。注意还有个重载
+`releaseOutputBuffer(index, long renderTimestampNs)`，那个**一定会渲染**，
+追帧时别用错。如果 MediaCodec 没配 Surface（输出到 ByteBuffer），那就是
+拿到的 `getOutputBuffer(index)` 不去用，同样 `releaseOutputBuffer(index, false)`。
+
+走 FFmpeg wrapper 时对应
+[`av_mediacodec_release_buffer(buffer, 0)`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86)
+（`buffer` 挂在 `frame->data[3]`，`0` = 丢弃不渲染）；其实直接
+`av_frame_unref(frame)` 也一样——FFmpeg 在释放这块引用时内部就是按
+`render = 0` 还回去的（[`mediacodecdec_common.c:289`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodecdec_common.c#L289)）。
+
+**iOS VideoToolbox**——输出通过解码回调
+`VTDecompressionOutputCallback` 交给你一个 `CVImageBufferRef`
+（即 `CVPixelBuffer`）。不渲染就是**在回调里什么都不做直接返回**：不
+`CFRetain`、不入显示队列。VideoToolbox 传进来的这块 buffer 来自它自己的
+`CVPixelBufferPool`，你不持有它，回调返回后就自动回池复用：
+
+```c
+static void onDecoded(void *outputRefCon, void *sourceFrameRefCon, OSStatus st,
+                      VTDecodeInfoFlags flags, CVImageBufferRef imageBuffer,
+                      CMTime pts, CMTime duration)
+{
+    Ctx *ctx = outputRefCon;
+    if (st != noErr || !imageBuffer)
+        return;
+    if (CMTimeCompare(pts, ctx->targetPts) < 0)
+        return;                    /* 追帧区间：直接返回，不 retain 就等于丢弃 */
+    enqueueForDisplay(ctx, imageBuffer);   /* 只有这一句才会走渲染管线 */
+}
+```
+
+具体到"不渲染"落在哪一步：用 `AVSampleBufferDisplayLayer` 显示的，就是不调
+`enqueue(sampleBuffer)`；自己走 Metal/OpenGL ES 的，就是不调
+`CVMetalTextureCacheCreateTextureFromImage()` /
+`CVOpenGLESTextureCacheCreateTextureFromImage()`、不 draw。iOS 上还有更
+省的一档——[作用点③](#43-作用点解码但不输出追参考帧时的兜底) 的
+`kVTDecodeFrame_DoNotOutputFrame`，连这个回调都不会触发。
+
+这一层**任何平台、任何解码方式都能做**，也是所有播放器精确 Seek 的
+"最后一公里"：解码输出的 `pts + duration ≤ target` 的帧全部走这条路。
 
 ---
 
@@ -618,14 +686,14 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 | | 通过 FFmpeg 调用 | 自己裸调平台 API |
 | --- | --- | --- |
-| **iOS VideoToolbox** | **① FFmpeg + VideoToolbox** | **② 自建 VTDecompressionSession** |
-| **Android MediaCodec** | **③ FFmpeg + MediaCodec** | **④ 直接用 MediaCodec API** |
+| **iOS VideoToolbox** | **[① FFmpeg + VideoToolbox](#52-组合ffmpeg--videotoolboxios--走-ffmpeg)** | **[② 自建 VTDecompressionSession](#53-组合自建-vtdecompressionsessionios--裸调)** |
+| **Android MediaCodec** | **[③ FFmpeg + MediaCodec](#54-组合ffmpeg--mediacodecandroid--走-ffmpeg)** | **[④ 直接用 MediaCodec API](#55-组合直接用-android-mediacodec-apiandroid--裸调)** |
 
-**结论先给**：第 4 章的 **② 解码器内跳过**（一行 `skip_frame` 就能丢帧）
-**只在组合①有效**；组合②③④ 都得退回到 **① 解码前丢包**——自己读 NAL 头
+**结论先给**：[第 4 章](#4-在哪里丢流水线上的四个作用点)的 **[② 解码器内跳过](#41-作用点ffmpeg-软解的-skip_frame原生支持)**（一行 `skip_frame` 就能丢帧）
+**只在[组合①](#52-组合ffmpeg--videotoolboxios--走-ffmpeg)有效**；组合[②](#53-组合自建-vtdecompressionsessionios--裸调)[③](#54-组合ffmpeg--mediacodecandroid--走-ffmpeg)[④](#55-组合直接用-android-mediacodec-apiandroid--裸调) 都得退回到 **[① 解码前丢包](#42-作用点解码前丢包硬解通用方案)**——自己读 NAL 头
 判定、把非参考帧丢掉。特别注意 Android：**无论走不走 FFmpeg 都逃不掉自己丢**。
 
-好在判定只要读 NAL 头 1~2 字节（3.3），成本极低。下面先解释这个差异
+好在判定只要读 NAL 头 1~2 字节（[3.3](#33-判定代码一个包au能不能整包丢)），成本极低。下面先解释这个差异
 从哪来，再逐个展开四种组合各自的落地手段。
 
 #### 为什么只有组合①能白嫖 skip_frame
@@ -637,12 +705,12 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 `skip_frame` 是 **FFmpeg 解码器的字段**，它能不能生效，取决于
 **"读懂码流"这一步是谁干的**：
 
-- **组合②④（裸调平台 API）**：压根不用 FFmpeg 解码，自然没有这个字段；
-- **组合①（hwaccel 模型）**：FFmpeg 仍是"主厨"——"读懂码流"照做，
+- **组合[②](#53-组合自建-vtdecompressionsessionios--裸调)[④](#55-组合直接用-android-mediacodec-apiandroid--裸调)（裸调平台 API）**：压根不用 FFmpeg 解码，自然没有这个字段；
+- **[组合①](#52-组合ffmpeg--videotoolboxios--走-ffmpeg)（hwaccel 模型）**：FFmpeg 仍是"主厨"——"读懂码流"照做，
   只把"重建像素"外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，
   `skip_frame` 的丢帧判定就发生在这一步，被丢的 NAL 根本不会提交给
   硬件，所以 ✅ 生效；
-- **组合③（wrapper 模型）**：两类活全部在系统解码器内部完成，FFmpeg
+- **[组合③](#54-组合ffmpeg--mediacodecandroid--走-ffmpeg)（wrapper 模型）**：两类活全部在系统解码器内部完成，FFmpeg
   只是"传菜员"——整包压缩数据原样递进去、解码结果端出来，中间不拆开
   看，连 NAL 都碰不到，`skip_frame` ❌ 自然无处生效。
 
@@ -683,15 +751,15 @@ avctx->skip_frame = AVDISCARD_DEFAULT;  /* 恢复 */
 被丢的非参考 NAL 在 FFmpeg 软件层
 （[`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626)）
 就被 `continue` 掉，根本不会提交给 VideoToolbox，硬件完全无感。追帧期还
-可以叠加 4.1 的 `skip_loop_filter = AVDISCARD_NONREF`。
+可以叠加 [4.1](#41-作用点ffmpeg-软解的-skip_frame原生支持) 的 `skip_loop_filter = AVDISCARD_NONREF`。
 
 各作用点在这条路上的可用性：
 
 | 手段 | 可用？ | 怎么做 |
 | --- | --- | --- |
-| **丢掉非参考帧** | ✅ | 走第 4 章的 **② 解码器内跳过**：`skip_frame = AVDISCARD_NONREF` 一行搞定——被丢的 NAL 在 [`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) 就 `continue`，根本不会提交给硬件 |
-| ③ 解码不输出 | ❌ | FFmpeg 没有暴露 VideoToolbox 的 `kVTDecodeFrame_DoNotOutputFrame` |
-| ④ 输出不渲染 | ✅ | 拿到帧后 `av_frame_unref()` 丢掉即可（输出只是传个引用，很便宜） |
+| **丢掉非参考帧** | ✅ | 走[第 4 章](#4-在哪里丢流水线上的四个作用点)的 **[② 解码器内跳过](#41-作用点ffmpeg-软解的-skip_frame原生支持)**：`skip_frame = AVDISCARD_NONREF` 一行搞定——被丢的 NAL 在 [`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) 就 `continue`，根本不会提交给硬件 |
+| [③ 解码不输出](#43-作用点解码但不输出追参考帧时的兜底) | ❌ | FFmpeg 没有暴露 VideoToolbox 的 `kVTDecodeFrame_DoNotOutputFrame` |
+| [④ 输出不渲染](#44-作用点输出但不渲染最后的兜底) | ✅ | 拿到帧后 `av_frame_unref()` 丢掉即可（输出只是传个引用，很便宜） |
 
 ### 5.3 组合②：自建 VTDecompressionSession（iOS · 裸调）
 
@@ -699,9 +767,9 @@ avctx->skip_frame = AVDISCARD_DEFAULT;  /* 恢复 */
 
 | 手段 | 可用？ | 怎么做 |
 | --- | --- | --- |
-| **丢掉非参考帧** | ✅ | 走第 4 章的 **① 解码前丢包**：没有 `skip_frame` 可用，改由自己判定：用 3.3 的 `packet_droppable()`，非参考帧不喂 |
-| ③ 解码不输出 | ✅ | 追帧区间内的参考帧加 `kVTDecodeFrame_DoNotOutputFrame` |
-| ④ 输出不渲染 | ✅ | 拿到 `CVPixelBuffer` 后直接释放，不送显示层 |
+| **丢掉非参考帧** | ✅ | 走[第 4 章](#4-在哪里丢流水线上的四个作用点)的 **[① 解码前丢包](#42-作用点解码前丢包硬解通用方案)**：没有 `skip_frame` 可用，改由自己判定：用 [3.3](#33-判定代码一个包au能不能整包丢) 的 `packet_droppable()`，非参考帧不喂 |
+| [③ 解码不输出](#43-作用点解码但不输出追参考帧时的兜底) | ✅ | 追帧区间内的参考帧加 `kVTDecodeFrame_DoNotOutputFrame` |
+| [④ 输出不渲染](#44-作用点输出但不渲染最后的兜底) | ✅ | 拿到 `CVPixelBuffer` 后直接释放，不送显示层 |
 
 ```c
 VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression;
@@ -719,11 +787,11 @@ VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
 
 | 手段 | 可用？ | 怎么做 |
 | --- | --- | --- |
-| **丢掉非参考帧** | ✅ | 走第 4 章的 **① 解码前丢包**：`skip_frame` 设了也白设，改在 `avcodec_send_packet()` **之前**用 3.3 判定，非参考帧直接 `av_packet_unref()` |
-| ③ 解码不输出 | ❌ | wrapper 没有暴露 `BUFFER_FLAG_DECODE_ONLY` |
-| ④ 输出不渲染 | ✅ | `av_mediacodec_release_buffer(buffer, 0)`（[`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86)） |
+| **丢掉非参考帧** | ✅ | 走[第 4 章](#4-在哪里丢流水线上的四个作用点)的 **[① 解码前丢包](#42-作用点解码前丢包硬解通用方案)**：`skip_frame` 设了也白设，改在 `avcodec_send_packet()` **之前**用 [3.3](#33-判定代码一个包au能不能整包丢) 判定，非参考帧直接 `av_packet_unref()` |
+| [③ 解码不输出](#43-作用点解码但不输出追参考帧时的兜底) | ❌ | wrapper 没有暴露 `BUFFER_FLAG_DECODE_ONLY` |
+| [④ 输出不渲染](#44-作用点输出但不渲染最后的兜底) | ✅ | `av_mediacodec_release_buffer(buffer, 0)`（[`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86)） |
 
-想用上 ③ 和超实时解码，就得改走组合④（裸调 MediaCodec）。
+想用上 [③ 解码不输出](#43-作用点解码但不输出追参考帧时的兜底) 和超实时解码，就得改走[组合④](#55-组合直接用-android-mediacodec-apiandroid--裸调)（裸调 Android MediaCodec）。
 
 ### 5.5 组合④：直接用 Android MediaCodec API（Android · 裸调）
 
@@ -731,9 +799,9 @@ VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
 
 | 手段 | 可用？ | API | 版本 |
 | --- | --- | --- | --- |
-| **丢掉非参考帧** | ✅ | 走第 4 章的 **① 解码前丢包**：非参考帧不 `queueInputBuffer`（判定见 3.3） | 全版本 |
-| ③ 解码不输出 | ✅ | `BUFFER_FLAG_DECODE_ONLY` | API 34+ |
-| ④ 输出不渲染 | ✅ | `releaseOutputBuffer(index, false)` | 全版本 |
+| **丢掉非参考帧** | ✅ | 走[第 4 章](#4-在哪里丢流水线上的四个作用点)的 **[① 解码前丢包](#42-作用点解码前丢包硬解通用方案)**：非参考帧不 `queueInputBuffer`（判定见 [3.3](#33-判定代码一个包au能不能整包丢)） | 全版本 |
+| [③ 解码不输出](#43-作用点解码但不输出追参考帧时的兜底) | ✅ | `BUFFER_FLAG_DECODE_ONLY` | API 34+ |
+| [④ 输出不渲染](#44-作用点输出但不渲染最后的兜底) | ✅ | `releaseOutputBuffer(index, false)` | 全版本 |
 
 ```java
 // ① 解码前丢包（追帧区间内）
@@ -807,9 +875,9 @@ while (read_and_decode(&frame)) {
 
 | 手段 | 追帧提速（典型） | 画质风险 | 备注 |
 | --- | --- | --- | --- |
-| 丢非参考帧（①/②） | 1.5x ~ 2x | **无** | 上限取决于非参考帧占比 |
-| 解码不输出（③） | 视输出路径开销 | 无 | 硬解收益明显 |
-| 输出不渲染（④） | 省 GL/上屏 | 无 | 必备兜底 |
+| 丢非参考帧（[①](#42-作用点解码前丢包硬解通用方案)/[②](#41-作用点ffmpeg-软解的-skip_frame原生支持)） | 1.5x ~ 2x | **无** | 上限取决于非参考帧占比 |
+| 解码不输出（[③](#43-作用点解码但不输出追参考帧时的兜底)） | 视输出路径开销 | 无 | 硬解收益明显 |
+| 输出不渲染（[④](#44-作用点输出但不渲染最后的兜底)） | 省 GL/上屏 | 无 | 必备兜底 |
 | 超实时解码（operating rate） | 1x ~ 3x | 无 | 厂商实现差异大 |
 | `NONKEY` 粗放快进 | ~GOP 倍数 | 只能停在关键帧 | 连续拖动预览适用 |
 
@@ -817,40 +885,127 @@ while (read_and_decode(&frame)) {
 
 ## 7. 踩坑清单
 
-1. **"丢 B 帧" ≠ "丢非参考帧"**。x264/x265 默认开 b-pyramid，参考 B 占
-   B 帧的约一半；按 `pict_type` 丢帧必花屏，必须按 NAL 头判参考性。
-2. **HEVC open-GOP：CRA + RASL**。Seek 到 CRA 后，其后的 RASL 帧
-   （类型 8/9）参考了 CRA 之前、此刻并没有解码的帧，必须丢弃——这是正确性问题，
-   不丢会花屏。闭 GOP（IDR）流无此问题。
-3. **HEVC 时域分层**。`_N` 严格含义是"同子层非参考"；单时域层流
-   （绝大多数点播）可无脑丢，多时域层流只保证最高层 `_N` 绝对安全。
-4. **`AV_PKT_FLAG_DISPOSABLE` 不保证存在**。它来自 MP4 的 `sdtp` box，
-   封装器不写就没有；判定逻辑要有 NAL 头解析兜底。
-5. **Android MediaCodec 上设置 FFmpeg 的 `skip_frame` 无效**。wrapper 模型不拆
-   NAL；丢帧必须发生在 `queueInputBuffer` 之前。
-6. **`AVDISCARD_BIDIR` 及以上会断参考链**。追帧只用 `NONREF`；更激进的
-   档位只配合"丢到下一个关键帧"的策略使用。
-7. **参考帧跳 loop filter 有累积漂移**。追帧期间设
-   `skip_loop_filter=ALL` 收益更大但首帧可能轻微失真；保守用 `NONREF` 档。
+七个真实会踩的坑。每条按「**症状 → 原因 → 对策**」写，方便照着排查。
+
+#### 坑 1：「丢 B 帧」≠「丢非参考帧」
+
+- **症状**：按 `pict_type == B` 丢帧，画面出现块状错乱，且一直持续到
+  下一个关键帧才恢复。
+- **原因**：x264/x265 默认开启 [b-pyramid](#b-pyramid为什么-b-帧也能成为参考帧)（`--b-pyramid normal`），每组
+  连续 B 帧里有一个会被其他 B 帧参考。以 `bf=3` 为例，`B1 B2 B3` 中 B2
+  是"参考 B"——丢了它，参考它的 B1/B3 就解不出来。
+- **对策**：只按 NAL 头的参考性判定，别按帧类型：H.264 看
+  `nal_ref_idc == 0`，H.265 看 VCL 类型是不是偶数（`_N` 后缀）。
+
+#### 坑 2：HEVC open-GOP——CRA 后面的 RASL 必须丢
+
+- **症状**：顺序播放一切正常，但 Seek 到某些位置后头几帧花屏，之后
+  自动恢复。
+- **原因**：`CRA_NUT`(21) 是 open-GOP 关键帧，紧随其后的 RASL 帧
+  （类型 8/9）参考了**上一个 GOP** 的帧。顺序播放时那些帧还在 DPB 里；
+  Seek 直接跳到 CRA 时，它们从未被解码过。
+- **对策**：Seek 落点是 CRA 时，把其后的 RASL 帧全部丢弃。这是**正确性
+  要求，不是优化**。闭 GOP（IDR）流不存在这个问题。
+
+#### 坑 3：HEVC 时域分层——`_N` 只保证"同子层非参考"
+
+- **症状**：对时域分层（temporal SVC）编码的流按 `_N` 丢帧，出现花屏。
+- **原因**：`_N` 的严格含义是"**在自己所属的时域子层内**不被参考"。
+  低层的 `_N` 帧仍可能被更高层的帧参考。
+- **对策**：先读 NAL 头的 `nuh_temporal_id_plus1`。绝大多数点播流只有
+  一个时域层（该值恒为 1），此时 `_N` 就是真非参考，可以直接丢；确实
+  分层的流，只有**最高层**的 `_N` 绝对安全。
+
+#### 坑 4：`AV_PKT_FLAG_DISPOSABLE` 经常是空的
+
+- **症状**：完全依赖这个 flag 判定，结果一帧也丢不掉，优化毫无效果。
+- **原因**：它来自 MP4 的 `sdtp` box，而这是个**可选** box——逐帧记录
+  依赖关系会让文件明显变大（实测量级在 10% 上下），所以不少封装器默认
+  不写。
+- **对策**：把它当"有则走快路径"的优化，判定逻辑**必须有 NAL 头解析
+  兜底**（[3.3](#33-判定代码一个包au能不能整包丢) 的 `packet_droppable()`）。
+
+#### 坑 5：Android MediaCodec 上 `skip_frame` 设了也白设
+
+- **症状**：设置 `skip_frame = AVDISCARD_NONREF` 之后，CPU 占用和追帧
+  耗时毫无变化。
+- **原因**：FFmpeg 的 MediaCodec 走 wrapper 模型——整包透传给系统
+  解码器，自己不拆 NAL，源码里根本没有 `skip_frame` 的处理逻辑。
+- **对策**：Android 上必须自己在喂入前判定并丢包（走 FFmpeg 就在
+  `avcodec_send_packet()` 之前，裸调就在 `queueInputBuffer()` 之前）。
+
+#### 坑 6：`AVDISCARD_BIDIR` 及以上会断参考链
+
+- **症状**：想着"更激进 = 更快"，把档位从 `NONREF` 调到 `BIDIR`，追帧
+  确实更快了，但画面开始花屏。
+- **原因**：`BIDIR` 丢掉**所有** B 帧，其中就包含被别的 B 帧参考的
+  "参考 B"（[坑 1](#坑-1丢-b-帧丢非参考帧)）；`NONINTRA`/`NONKEY` 更激进，破坏更彻底。
+- **对策**：追帧只用 `NONREF`——阶梯里**唯一无损**的档位。更激进的档位
+  只适合"连续拖动预览"这种能接受画面停在关键帧的场景。
+
+#### 坑 7：参考帧跳过 loop filter 会累积漂移
+
+- **症状**：追帧结束后的首帧比正常播放时糊一点、有轻微块感。
+- **原因**：`skip_loop_filter = ALL` 让**参考帧**也跳过去块滤波，解出来
+  的像素与编码器当初使用的参考不一致，误差会沿参考链逐帧累积。
+- **对策**：保守用 `AVDISCARD_NONREF` 档——只跳非参考帧的滤波，反正
+  没人参考它们，零风险。
 
 ## 8. 总结
 
+> **全文一句话**：安全丢帧的唯一判据是**参考性**（这一帧会不会被别的帧
+> 参考），不是帧类型 I/B/P；判定只要读 NAL 头的 1~2 个字节，不用解码。
+
 回到开头的两个问题：
 
-**丢非参考帧，解码器支持吗？**
-FFmpeg 软解和 hwaccel 模型（VideoToolbox 等）原生支持
-（`skip_frame = AVDISCARD_NONREF`，丢弃发生在 NAL 解析层，硬件无感）；
-Android MediaCodec 这类 wrapper 模型解码器不支持——但也不需要支持：非参考帧的
-定义保证了"解码前丢包"与"解码器内跳过"效果完全等价。判定只需读 NAL
-头 1~2 字节。解码前丢不掉的（参考帧），用"解码不输出"
-（`BUFFER_FLAG_DECODE_ONLY` / `kVTDecodeFrame_DoNotOutputFrame`）和
-"输出不渲染"（`releaseOutputBuffer(false)`）两层兜底快速追帧。
+**Q1：丢非参考帧，解码器支持吗？**
 
-**参考帧与 I/B/P 的关系？**
-正交的两个维度：`slice_type` 决定 I/B/P（怎么预测自己），NAL 头决定参考性
-（是否被别人参考）。H.264 看 `nal_ref_idc == 0`，H.265 看 VCL 类型的
-`_N` 后缀（偶数）；B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧。
-安全丢帧的唯一判据是参考性，不是帧类型。
+分**软解**和**硬解**两大类看，结论都是"能丢"，区别只在**谁动手**。
+
+**软解**——指用 FFmpeg 自带的 H.264 / H.265 软件解码器
+（[`h264dec.c`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c) /
+[`hevcdec.c`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c)，
+纯 CPU 算；顺带澄清一个常见混淆：x264 / x265 是**编码**器，负责把画面压成
+码流，不参与解码）：
+
+✅ **原生支持，一行搞定**——`avctx->skip_frame = AVDISCARD_NONREF`。非参考帧
+在 NAL 遍历循环的最前面就被 `continue` 掉，连熵解码都不做（[第 4 章作用点②](#41-作用点ffmpeg-软解的-skip_frame原生支持)）。
+
+**硬解**——指交给手机的专用解码芯片算。要看[第 5 章](#51-先分清四种组合)那四种组合，**只有第一种
+能白嫖这行代码**：
+
+| 硬解组合 | 谁来丢非参考帧 |
+| --- | --- |
+| **[① FFmpeg + iOS VideoToolbox](#52-组合ffmpeg--videotoolboxios--走-ffmpeg)** | ✅ **解码器代劳**，同样一行 `skip_frame`——FFmpeg 仍在软件层解析 NAL，丢弃发生在提交给硬件之前 |
+| **[② 自建 VTDecompressionSession](#53-组合自建-vtdecompressionsessionios--裸调)** | 自己丢：绕开了 FFmpeg 解码层，没这个开关 |
+| **[③ FFmpeg + Android MediaCodec](#54-组合ffmpeg--mediacodecandroid--走-ffmpeg)** | 自己丢：`skip_frame` 设了也白设，AVPacket 是整包透传给系统解码器的 |
+| **[④ 直接用 Android MediaCodec API](#55-组合直接用-android-mediacodec-apiandroid--裸调)** | 自己丢：非参考帧不 `queueInputBuffer` |
+
+**自己丢一点不吃亏**：非参考帧的定义保证了没有任何帧需要它，谁动手丢，效果
+完全等价；判定也只要读 1~2 个字节（[3.3](#33-判定代码一个包au能不能整包丢)），成本可以忽略。
+
+解码前丢不掉的是**参考帧**（它们要留在 DPB 里给后面的帧当底子），改用两层
+兜底加速追帧：
+
+- **[解码不输出](#43-作用点解码但不输出追参考帧时的兜底)**——照常解码、照常
+  进 DPB，只是不产出画面。API 是 `BUFFER_FLAG_DECODE_ONLY`（Android 14+）
+  和 `kVTDecodeFrame_DoNotOutputFrame`（iOS VideoToolbox）。注意
+  **FFmpeg 无论软解硬解都没暴露这个能力**，只有裸调平台 API 才用得上。
+- **[输出不渲染](#44-作用点输出但不渲染最后的兜底)**——画面已经解出来了，
+  只是不送上屏幕，省掉纹理上传和 GL 绘制，**任何平台、任何解码方式都能做**，
+  是最后一道兜底。软解 / Android MediaCodec / iOS VideoToolbox 三种写法，
+  见 [4.4 作用点④](#44-作用点输出但不渲染最后的兜底)。
+
+**Q2：参考帧与 I/B/P 是什么关系？**
+
+**两个互相独立的属性**，谁也推不出谁：
+
+- `slice_type` 决定 I/B/P——说的是**这一帧怎么参考别人**；
+- NAL 头决定参考性——说的是**这一帧会不会被别人参考**。
+
+判定：H.264 看 `nal_ref_idc == 0`，H.265 看 VCL 类型是不是偶数
+（`_N` 后缀）。B 帧可以是参考帧（b-pyramid 的中层 B），I/P 也可以是
+非参考帧——所以**按帧类型丢帧迟早翻车**（[坑 1](#坑-1丢-b-帧丢非参考帧)）。
 
 ## 附：FFmpeg 源码索引
 

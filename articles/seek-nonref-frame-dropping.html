@@ -333,6 +333,12 @@ tr[id^="ap"]:target > td { background: #0e7fa81f; }
 tr[id^="ap"]:target > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 @keyframes apflash { from { background: #0e7fa838; } to { background: transparent; } }
 tr[id^="ap"].flash > td { animation: apflash 1.6s ease-out; }
+.pit, h3[id] { scroll-margin-top: 90px; }
+.pit.flash > summary, h3.flash, .tabpane.flash { animation: apflash 1.6s ease-out; }
+/* 流程图里可点的节点：↗ 标记 + hover 变色，点进 4.4 的三平台写法 */
+a.m6-link { cursor: pointer; text-decoration: none; }
+a.m6-link:hover .m6-node rect { stroke: var(--accent); stroke-width: 2; }
+a.m6-link:hover .m6-node text { fill: var(--accent); }
 
 /* 分组标题：跨满整行，把四图分成 iOS / Android 两组 */
 .m5-group-title {
@@ -401,19 +407,62 @@ tr[id^="ap"].flash > td { animation: apflash 1.6s ease-out; }
 #m6-desc b { color: var(--accent); }
 
 /* ---------- flip cards ---------- */
-.flips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin: 20px 0; }
-.flip { perspective: 900px; height: 176px; cursor: pointer; }
-.flip .inner { position: relative; width: 100%; height: 100%; transition: transform .5s; transform-style: preserve-3d; }
-.flip.flipped .inner { transform: rotateY(180deg); }
-.flip .face {
-  position: absolute; inset: 0; backface-visibility: hidden; border-radius: 14px;
-  border: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; justify-content: center;
+/* 踩坑清单：高度自适应的展开条（原翻转卡片是固定高度，长内容会溢出重叠） */
+.pits { display: flex; flex-direction: column; gap: 10px; margin: 20px 0; }
+.pit { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.pit[open] { border-color: #c3d0e2; box-shadow: 0 6px 18px rgba(30, 51, 84, .07); }
+.pit summary {
+  display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none;
+  padding: 13px 16px; font-size: 14.5px; font-weight: 700; color: #101a28; line-height: 1.5;
 }
-.flip .front { background: linear-gradient(150deg, #ffffff, #f0f4fa); box-shadow: 0 6px 18px rgba(30, 51, 84, .07); }
-.flip .front .no { font-family: var(--mono); font-size: 11px; color: var(--bad); margin-bottom: 8px; }
-.flip .front .t { font-size: 14.5px; font-weight: 700; color: #101a28; line-height: 1.5; }
-.flip .front .cue { margin-top: auto; font-size: 11px; color: var(--muted); }
-.flip .back { background: #f7fafd; transform: rotateY(180deg); font-size: 12.5px; color: #3d4a5c; line-height: 1.65; justify-content: flex-start; padding-top: 18px; }
+.pit summary::-webkit-details-marker { display: none; }
+.pit summary::after { content: '▾'; margin-left: auto; color: var(--muted); font-weight: 400; transition: transform .2s; }
+.pit[open] summary::after { transform: rotate(180deg); }
+.pit summary:hover { background: #f7fafd; }
+.pit .pno {
+  flex: none; font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--bad);
+  border: 1px solid #d63b4740; border-radius: 6px; padding: 2px 7px;
+}
+.pit .ptitle { font-weight: 700; }
+.pit .pbody { padding: 2px 16px 16px 16px; border-top: 1px solid var(--line); }
+.pit .pbody p { margin: 10px 0 0; font-size: 13px; color: #3d4a5c; line-height: 1.75; }
+.pit .plab {
+  display: inline-block; min-width: 34px; margin-right: 8px; padding: 1px 7px; border-radius: 5px;
+  font-size: 11.5px; font-weight: 700; text-align: center; vertical-align: 1px;
+}
+.pit .plab.sym { color: #b7791f; background: #b7791f18; }   /* 症状 */
+.pit .plab.why { color: #5b5bd6; background: #5b5bd618; }   /* 原因 */
+.pit .plab.fix { color: #0f9d6e; background: #0f9d6e18; }   /* 对策 */
+
+/* 总结：结论横幅 + Q&A 卡片 */
+.keypoint {
+  display: flex; gap: 14px; align-items: flex-start; margin: 18px 0 22px;
+  background: linear-gradient(120deg, #0e7fa814, #5b5bd60e);
+  border: 1px solid #0e7fa833; border-left: 5px solid var(--accent);
+  border-radius: 14px; padding: 16px 18px;
+}
+.keypoint .kp-tag {
+  flex: none; font-size: 11.5px; font-weight: 700; color: #fff; background: var(--accent);
+  border-radius: 6px; padding: 3px 9px; margin-top: 2px; white-space: nowrap;
+}
+.keypoint .kp-text { font-size: 14.5px; line-height: 1.8; color: #24303f; }
+.qa { border: 1px solid var(--line); border-radius: 14px; padding: 15px 18px 6px; margin: 14px 0; background: var(--panel); }
+.qa .q { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; color: #101a28; }
+.qa .qn {
+  flex: none; font-family: var(--mono); font-size: 12px; font-weight: 700; color: #fff;
+  background: #101a28; border-radius: 6px; padding: 2px 8px;
+}
+.qa .a { margin-top: 4px; }
+.qa .a p { margin: 9px 0; }
+.qa .a ul { margin: 8px 0 8px 22px; }
+/* 「软解 / 硬解」这类小节引子：彩色标签 + 紧跟说明，正文和问答卡片里都用 */
+.qsub { margin-top: 14px; }
+.qtag {
+  display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .04em;
+  color: #fff; background: var(--accent); border-radius: 5px;
+  padding: 2px 9px; margin-right: 8px; vertical-align: 1px;
+}
+.qa .a .tscroll { margin: 10px 0; }
 
 /* ---------- footer ---------- */
 footer { border-top: 1px solid var(--line); text-align: center; padding: 34px 20px 44px; color: var(--muted); font-size: 12.5px; }
@@ -468,7 +517,7 @@ footer .links { margin-bottom: 8px; }
     点播场景相邻两个关键帧的间隔（GOP，画面组）普遍 2~10 秒、几十到几百帧，优化只有两个方向：</p>
   <ul>
     <li><strong>少解码</strong>——把追帧区间里没人依赖的帧直接丢掉，<strong>本文主题</strong>；</li>
-    <li><strong>快解码</strong>——让解码器远快于播放速度地跑（第 5 章顺带覆盖）。</li>
+    <li><strong>快解码</strong>——让解码器远快于播放速度地跑（<a class="apref" href="#ch5">第 5 章</a>顺带覆盖）。</li>
   </ul>
 
   <div class="module" id="m1">
@@ -661,7 +710,7 @@ footer .links { margin-bottom: 8px; }
         → <b>必须丢弃</b>，画面从 CRA32 开始——不丢会花屏，这是正确性要求。</div>
     </div>
 
-    <h3 style="margin-top:24px">整包判定：~30 行判断一个 AVPacket 能否整包丢弃</h3>
+    <h3 id="s33" style="margin-top:24px">整包判定：~30 行判断一个 AVPacket 能否整包丢弃</h3>
     <div class="codeblock">
       <button class="copy-btn" data-copy="cp-droppable">复制</button>
 <pre id="cp-droppable"><code><span class="cm">/* 返回 1：该 packet 的 VCL 全部非参考，可整包丢弃（AVCC/HVCC 长度前缀格式） */</span>
@@ -725,7 +774,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
       <li><strong>解码层——解完才知道，只能事后用</strong>：解码输出的每个 <code>AVFrame</code>
         自带这两个信息，直接读 <code>frame-&gt;pict_type</code>（I/P/B）和
         <code>frame-&gt;flags &amp; AV_FRAME_FLAG_KEY</code>（非 0＝关键帧）。
-        此时解码成本已经花掉，这条路只能服务「解码后丢帧」（比如作用点④的不渲染判定），
+        此时解码成本已经花掉，这条路只能服务「解码后丢帧」（比如<a class="apref" href="#ap4">作用点④</a>的不渲染判定），
         省不了解码本身。</li>
     </ul>
   </div>
@@ -745,7 +794,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
   </ul>
   <p>关键是分清<strong>「输出」和「渲染」是两件事</strong>：「输出」是解码器交货、你拿到这帧数据；
     「渲染」是把这帧数据画到屏幕。正因为可以「拿到但不画」、甚至「解了但不交货」，
-    丢帧才有了下面 ③ 和 ④ 两个额外的作用点。同一帧可以在这条流水线的四个位置被丢掉，
+    丢帧才有了下面 <a class="apref" href="#ap3">③</a> 和 <a class="apref" href="#ap4">④</a> 两个额外的作用点。同一帧可以在这条流水线的四个位置被丢掉，
     <strong>越早丢省得越多</strong>：①② 只能丢非参考帧但收益最大；③④ 能丢任何帧
     （解码照做、只是不出去），是精确 Seek 的兜底。</p>
 
@@ -827,8 +876,86 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
         （FFmpeg 软解和 hwaccel / VideoToolbox 支持）。</li>
     </ul>
     <p>一句话选型：<strong>能用 FFmpeg <code>skip_frame</code> 就用②（省事，一行代码）；Android MediaCodec 这类硬解没这个开关，
-      只能用①（通用，自己判定）</strong>。这也是第 5 章要展开的关键差异。</p>
+      只能用①（通用，自己判定）</strong>。这也是<a class="apref" href="#ch5">第 5 章</a>要展开的关键差异。</p>
   </div>
+
+  <h3 id="ap4-how">「输出但不渲染」具体怎么做</h3>
+  <p>作用点④ 是唯一<b>任何平台、任何解码方式都能用</b>的兜底，值得单独讲清楚。先看「渲染」到底包含哪几步——
+    只有知道省的是什么，才知道这一层值不值：</p>
+  <ol>
+    <li>把帧的像素<b>传给 GPU</b>（软解要 <code>glTexImage2D</code> 上传几 MB；硬解要把解码器的输出 buffer 绑成纹理）；</li>
+    <li>用 shader <b>画一遍</b>（顺带做 YUV→RGB 颜色转换、缩放）；</li>
+    <li><b>提交上屏</b>（<code>eglSwapBuffers</code> / <code>presentDrawable</code>，再交给系统合成器）。</li>
+  </ol>
+  <div class="note warn"><b>不渲染 = 拿到帧之后一步都不做，直接把这块 buffer 还回去。</b>
+    关键不在丢，而在<b>必须还</b>：解码器的输出 buffer 是固定几个循环复用的，忘了还，池子耗尽，
+    解码线程就卡死了——「丢帧反而更慢」多半是这里出的问题。</div>
+
+  <p class="qsub"><span class="qtag">FFmpeg 软解</span><code>avcodec_receive_frame()</code> 拿到的
+    <code>AVFrame</code> 里是 CPU 内存中的 YUV。不渲染就是<b>不把它塞进渲染队列</b>，直接
+    <code>av_frame_unref()</code> 让引用计数归零、内存回到 FFmpeg 的缓冲池：</p>
+  <div class="codeblock">
+    <button class="copy-btn" data-copy="cp-ap4-sw">复制</button>
+<pre id="cp-ap4-sw"><code><span class="kw">while</span> (avcodec_receive_frame(avctx, frame) == 0) {
+    <span class="kw">if</span> (frame-&gt;pts + frame-&gt;duration &lt;= target_pts) {
+        av_frame_unref(frame);   <span class="cm">/* 追帧区间：拿到就还，不进渲染队列 */</span>
+        <span class="kw">continue</span>;
+    }
+    render(frame);               <span class="cm">/* 追上目标，正常上屏 */</span>
+}</code></pre>
+  </div>
+
+  <p class="qsub"><span class="qtag">Android MediaCodec</span>输出 buffer 必须用
+    <code>releaseOutputBuffer()</code> 交还，这个函数的第二个参数就是「要不要渲染」：</p>
+  <div class="codeblock">
+    <button class="copy-btn" data-copy="cp-ap4-mc">复制</button>
+<pre id="cp-ap4-mc"><code><span class="cm">// 追帧区间：还回去，但不送 Surface</span>
+codec.releaseOutputBuffer(outIndex, <span class="kw">false</span>);
+<span class="cm">// 追上目标：还回去，并送 Surface 显示</span>
+codec.releaseOutputBuffer(outIndex, <span class="kw">true</span>);</code></pre>
+  </div>
+  <ul>
+    <li>传 <code>false</code> 时这一帧根本不会到达 Surface，也就不会触发
+      <code>SurfaceTexture.onFrameAvailable</code> → <code>updateTexImage()</code>（把最新一帧绑到 OES 纹理）
+      → OES 转 2D 纹理的绘制 → 合成上屏这一整串；</li>
+    <li>注意还有个重载 <code>releaseOutputBuffer(index, long renderTimestampNs)</code>，那个<b>一定会渲染</b>，
+      追帧时别用错；</li>
+    <li>没配 Surface（输出到 ByteBuffer）时同理：<code>getOutputBuffer(index)</code> 拿到的数据不去用，
+      照样 <code>releaseOutputBuffer(index, false)</code>；</li>
+    <li>走 FFmpeg wrapper 时对应
+      <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>av_mediacodec_release_buffer(buffer, 0)</code></a>
+      （<code>buffer</code> 挂在 <code>frame-&gt;data[3]</code>，<code>0</code> = 丢弃不渲染）；其实直接
+      <code>av_frame_unref(frame)</code> 也一样——FFmpeg 释放这块引用时内部就是按 <code>render = 0</code> 还回去的
+      （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodecdec_common.c#L289" target="_blank" rel="noopener"><code>mediacodecdec_common.c:289</code></a>）。</li>
+  </ul>
+
+  <p class="qsub"><span class="qtag">iOS VideoToolbox</span>输出通过解码回调
+    <code>VTDecompressionOutputCallback</code> 交给你一个 <code>CVImageBufferRef</code>（即 <code>CVPixelBuffer</code>）。
+    不渲染就是<b>在回调里什么都不做直接返回</b>：不 <code>CFRetain</code>、不入显示队列。这块 buffer 来自
+    VideoToolbox 自己的 <code>CVPixelBufferPool</code>，你不持有它，回调返回后就自动回池复用：</p>
+  <div class="codeblock">
+    <button class="copy-btn" data-copy="cp-ap4-vt">复制</button>
+<pre id="cp-ap4-vt"><code><span class="kw">static void</span> <span class="fn">onDecoded</span>(<span class="kw">void</span> *outputRefCon, <span class="kw">void</span> *sourceFrameRefCon, OSStatus st,
+                      VTDecodeInfoFlags flags, CVImageBufferRef imageBuffer,
+                      CMTime pts, CMTime duration)
+{
+    Ctx *ctx = outputRefCon;
+    <span class="kw">if</span> (st != noErr || !imageBuffer)
+        <span class="kw">return</span>;
+    <span class="kw">if</span> (CMTimeCompare(pts, ctx-&gt;targetPts) &lt; 0)
+        <span class="kw">return</span>;                    <span class="cm">/* 追帧区间：直接返回，不 retain 就等于丢弃 */</span>
+    enqueueForDisplay(ctx, imageBuffer);   <span class="cm">/* 只有这一句才会走渲染管线 */</span>
+}</code></pre>
+  </div>
+  <ul>
+    <li>用 <code>AVSampleBufferDisplayLayer</code> 显示的，「不渲染」就是不调 <code>enqueue(sampleBuffer)</code>；</li>
+    <li>自己走 Metal / OpenGL ES 的，就是不调 <code>CVMetalTextureCacheCreateTextureFromImage()</code> /
+      <code>CVOpenGLESTextureCacheCreateTextureFromImage()</code>、不 draw；</li>
+    <li>iOS 上还有更省的一档——<a class="apref" href="#ap3">作用点③</a> 的
+      <code>kVTDecodeFrame_DoNotOutputFrame</code>，连这个回调都不会触发。</li>
+  </ul>
+  <p>这一层是所有播放器精确 Seek 的「最后一公里」：解码输出的
+    <code>pts + duration ≤ target</code> 的帧全部走这条路。</p>
 </section>
 
 <!-- ==================== CH 5 ==================== -->
@@ -841,15 +968,15 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
     <table class="t">
       <tr><th></th><th>通过 FFmpeg 调用</th><th>自己裸调平台 API</th></tr>
       <tr><th>iOS VideoToolbox</th>
-        <td><b>① FFmpeg + VideoToolbox</b></td>
-        <td><b>② 自建 VTDecompressionSession</b></td></tr>
+        <td><b><a class="apref tabref" href="#m5-pane-1" data-m5="1">① FFmpeg + VideoToolbox</a></b></td>
+        <td><b><a class="apref tabref" href="#m5-pane-2" data-m5="2">② 自建 VTDecompressionSession</a></b></td></tr>
       <tr><th>Android MediaCodec</th>
-        <td><b>③ FFmpeg + MediaCodec</b></td>
-        <td><b>④ 直接用 MediaCodec API</b></td></tr>
+        <td><b><a class="apref tabref" href="#m5-pane-3" data-m5="3">③ FFmpeg + MediaCodec</a></b></td>
+        <td><b><a class="apref tabref" href="#m5-pane-4" data-m5="4">④ 直接用 MediaCodec API</a></b></td></tr>
     </table>
   </div>
-  <div class="note"><b>结论先给</b>：第 4 章的 <a class="apref" href="#ap2"><b>② 解码器内跳过</b></a>（一行 <code>skip_frame</code> 就能丢帧）
-    <b>只在组合①有效</b>；组合②③④ 都得退回到 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>——自己读 NAL 头判定、把非参考帧丢掉。
+  <div class="note"><b>结论先给</b>：<a class="apref" href="#ch4">第 4 章</a>的 <a class="apref" href="#ap2"><b>② 解码器内跳过</b></a>（一行 <code>skip_frame</code> 就能丢帧）
+    <b>只在<a class="apref tabref" href="#m5-pane-1" data-m5="1">组合①</a>有效</b>；组合<a class="apref tabref" href="#m5-pane-2" data-m5="2">②</a><a class="apref tabref" href="#m5-pane-3" data-m5="3">③</a><a class="apref tabref" href="#m5-pane-4" data-m5="4">④</a> 都得退回到 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>——自己读 NAL 头判定、把非参考帧丢掉。
     特别注意 Android：<b>无论走不走 FFmpeg 都逃不掉自己丢</b>。好在判定只要读 NAL 头 1~2 字节，成本极低。</div>
 
   <h3>为什么只有组合①能白嫖 skip_frame</h3>
@@ -858,11 +985,11 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
     真正吃算力的活）。<code>skip_frame</code> 是 <strong>FFmpeg 解码器的字段</strong>，它能不能生效，
     取决于<strong>「读懂码流」这一步是谁干的</strong>：</p>
   <ul>
-    <li><strong>组合②④（裸调平台 API）</strong>：压根不用 FFmpeg 解码，自然没有这个字段；</li>
-    <li><strong>组合①（hwaccel 模型）</strong>：FFmpeg 仍是「主厨」——「读懂码流」照做，只把
+    <li><strong>组合<a class="apref tabref" href="#m5-pane-2" data-m5="2">②</a><a class="apref tabref" href="#m5-pane-4" data-m5="4">④</a>（裸调平台 API）</strong>：压根不用 FFmpeg 解码，自然没有这个字段；</li>
+    <li><strong><a class="apref tabref" href="#m5-pane-1" data-m5="1">组合①</a>（hwaccel 模型）</strong>：FFmpeg 仍是「主厨」——「读懂码流」照做，只把
       「重建像素」外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，<code>skip_frame</code> 的丢帧判定
       就发生在这一步，被丢的 NAL <strong>根本不会提交给硬件</strong>，✅ 所以生效；</li>
-    <li><strong>组合③（wrapper 模型）</strong>：两类活<strong>全部在系统解码器内部完成</strong>，
+    <li><strong><a class="apref tabref" href="#m5-pane-3" data-m5="3">组合③</a>（wrapper 模型）</strong>：两类活<strong>全部在系统解码器内部完成</strong>，
       FFmpeg 只是「传菜员」——整包压缩数据原样递进去、解码结果端出来，中间不拆开看，连 NAL 都碰不到，
       <code>skip_frame</code> ❌ 自然无处生效。</li>
   </ul>
@@ -886,7 +1013,7 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
         <h4>② 自建 VTDecompressionSession</h4>
         <div class="sub4">iOS 直接调用，不走 FFmpeg 解码</div>
         <div class="m5-box">AVPacket / CMSampleBuffer<small>自己解封装拿到</small></div>
-        <div class="m5-box app-layer">你的代码：读 NAL 头判定<small>非参考帧就不喂（3.3 的判定）</small></div>
+        <div class="m5-box app-layer">你的代码：读 NAL 头判定<small>非参考帧就不喂（<a class="apref" href="#s33">第 3 章</a>的判定）</small></div>
         <div class="m5-box hw-layer">VideoToolbox 硬件解码<small>VTDecompressionSessionDecodeFrame</small></div>
         <div class="m5-verdict" id="m5-verdict-2" style="color:var(--muted)">—</div>
         <div class="m5-note" id="m5-note-2"></div>
@@ -936,14 +1063,14 @@ avctx-&gt;skip_frame = AVDISCARD_DEFAULT; <span class="cm">/* 恢复 */</span></
         <table class="t">
           <tr><th>手段</th><th>可用？</th><th>怎么做</th></tr>
           <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
-            <td>走第 4 章的 <a class="apref" href="#ap2"><b>② 解码器内跳过</b></a>：<code>skip_frame = AVDISCARD_NONREF</code> 一行搞定——被丢的 NAL 在
+            <td>走<a class="apref" href="#ch4">第 4 章</a>的 <a class="apref" href="#ap2"><b>② 解码器内跳过</b></a>：<code>skip_frame = AVDISCARD_NONREF</code> 一行搞定——被丢的 NAL 在
             <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a>
             就 <code>continue</code>，根本不会提交给硬件</td></tr>
           <tr><td>③ 解码不输出</td><td style="color:var(--bad)">❌</td><td>FFmpeg 没有暴露 VideoToolbox 的 <code>kVTDecodeFrame_DoNotOutputFrame</code></td></tr>
           <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td>拿到帧后 <code>av_frame_unref()</code>（输出只是传个引用，很便宜）</td></tr>
         </table>
       </div>
-      <div class="note">追帧期还可叠加 <code>skip_loop_filter = AVDISCARD_NONREF</code>（见 4.1）。</div>
+      <div class="note">追帧期还可叠加 <code>skip_loop_filter = AVDISCARD_NONREF</code>（见第 4 章<a class="apref" href="#ap2">作用点②</a>）。</div>
     </div>
 
     <div class="tabpane" id="m5-pane-2">
@@ -952,8 +1079,8 @@ avctx-&gt;skip_frame = AVDISCARD_DEFAULT; <span class="cm">/* 恢复 */</span></
         <table class="t">
           <tr><th>手段</th><th>可用？</th><th>怎么做</th></tr>
           <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
-            <td>走第 4 章的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：没有 <code>skip_frame</code> 可用，改由自己判定——用
-            <code>packet_droppable()</code>（见第 3 章），非参考帧不喂</td></tr>
+            <td>走<a class="apref" href="#ch4">第 4 章</a>的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：没有 <code>skip_frame</code> 可用，改由自己判定——用
+            <code>packet_droppable()</code>（见<a class="apref" href="#s33">第 3 章</a>），非参考帧不喂</td></tr>
           <tr><td>③ 解码不输出</td><td style="color:var(--ref)">✅</td><td>参考帧加 <code>kVTDecodeFrame_DoNotOutputFrame</code></td></tr>
           <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td>拿到 <code>CVPixelBuffer</code> 后直接释放，不送显示层</td></tr>
         </table>
@@ -976,14 +1103,14 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFa
         <table class="t">
           <tr><th>手段</th><th>可用？</th><th>怎么做</th></tr>
           <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
-            <td>走第 4 章的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：<code>skip_frame</code> 设了也白设，改在
+            <td>走<a class="apref" href="#ch4">第 4 章</a>的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：<code>skip_frame</code> 设了也白设，改在
             <code>avcodec_send_packet()</code> <b>之前</b>判定，非参考帧直接 <code>av_packet_unref()</code></td></tr>
           <tr><td>③ 解码不输出</td><td style="color:var(--bad)">❌</td><td>wrapper 没有暴露 <code>BUFFER_FLAG_DECODE_ONLY</code></td></tr>
           <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td><code>av_mediacodec_release_buffer(buffer, 0)</code>
             （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>mediacodec.h:86</code></a>）</td></tr>
         </table>
       </div>
-      <div class="note">想用上 ③ 和超实时解码，就得改走组合 ④（裸调 MediaCodec）。</div>
+      <div class="note">想用上 <a class="apref" href="#ap3">③ 解码不输出</a> 和超实时解码，就得改走组合 ④（裸调 MediaCodec）。</div>
     </div>
 
     <div class="tabpane" id="m5-pane-4">
@@ -992,7 +1119,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFa
         <table class="t">
           <tr><th>手段</th><th>可用？</th><th>API</th><th>版本</th></tr>
           <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
-            <td>走第 4 章的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：非参考帧不 <code>queueInputBuffer</code>（判定见第 3 章）</td>
+            <td>走<a class="apref" href="#ch4">第 4 章</a>的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：非参考帧不 <code>queueInputBuffer</code>（判定见<a class="apref" href="#s33">第 3 章</a>）</td>
             <td>全版本</td></tr>
           <tr><td>③ 解码不输出</td><td style="color:var(--ref)">✅</td><td><code>BUFFER_FLAG_DECODE_ONLY</code></td><td>API 34+</td></tr>
           <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td><code>releaseOutputBuffer(index, false)</code></td><td>全版本</td></tr>
@@ -1087,11 +1214,14 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime *
           <rect x="630" y="302" width="205" height="44" rx="10"/>
           <text x="733" y="329">输出帧 pts+dur &gt; T ？</text>
         </g>
-        <g class="m6-node" data-n="norender">
-          <rect x="455" y="396" width="195" height="46" rx="10"/>
-          <text x="553" y="418">④ 不渲染丢弃</text>
-          <text class="sub" x="553" y="433">release(false)</text>
-        </g>
+        <a class="apref m6-link" href="#ap4-how">
+          <title>点击查看：软解 / Android MediaCodec / iOS VideoToolbox 三种写法</title>
+          <g class="m6-node" data-n="norender">
+            <rect x="455" y="396" width="195" height="46" rx="10"/>
+            <text x="553" y="418">④ 不渲染丢弃 ↗</text>
+            <text class="sub" x="553" y="433">release(false)</text>
+          </g>
+        </a>
         <g class="m6-node" data-n="done">
           <rect x="700" y="396" width="240" height="46" rx="10"/>
           <text x="820" y="418">恢复 skip_frame=DEFAULT</text>
@@ -1121,70 +1251,126 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime *
 <!-- ==================== CH 7 ==================== -->
 <section class="chapter" id="ch7">
   <div class="chap-head"><span class="no">07</span><h2>踩坑清单</h2></div>
-  <p class="lead">七个真实世界会踩的坑，点击卡片翻面看细节。</p>
-  <div class="flips" id="flips">
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 01</div><div class="t">「丢 B 帧」≠「丢非参考帧」</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back">x264/x265 默认开 b-pyramid，参考 B 约占 B 帧一半；按 <code>pict_type</code> 丢帧必花屏。
-        必须按 NAL 头判参考性（H.264 <code>nal_ref_idc</code>、H.265 <code>_N</code> 类型）。</div>
-    </div></div>
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 02</div><div class="t">HEVC open-GOP：CRA + RASL</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back">open-GOP 里 CRA(21) 后面跟着一批 RASL 帧（8/9）：显示在 CRA 之前、
-        参考上一个 GOP 的帧。连续播放没问题；<b>Seek 跳到 CRA</b> 时上一个 GOP 没解码，
-        RASL 的参考不存在、解不出来，<b>必须丢弃</b>——不丢会花屏。闭 GOP（IDR）流无此问题。</div>
-    </div></div>
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 03</div><div class="t">HEVC 时域分层的 _N 语义</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back"><code>_N</code> 严格含义是「同子层非参考」；单时域层流（绝大多数点播）可无脑丢，
-        多时域层流只保证最高 TemporalId 层的 <code>_N</code> 绝对安全。</div>
-    </div></div>
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 04</div><div class="t">DISPOSABLE flag 不保证存在</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back"><code>AV_PKT_FLAG_DISPOSABLE</code> 来自 MP4 的 <code>sdtp</code> box，
-        封装器不写就没有；判定逻辑要有 NAL 头解析兜底。</div>
-    </div></div>
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 05</div><div class="t">Android MediaCodec 上 skip_frame 无效</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back">wrapper 模型不拆 NAL，FFmpeg 的 <code>skip_frame</code> 设了也白设；
-        丢帧必须发生在 <code>queueInputBuffer</code> 之前。</div>
-    </div></div>
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 06</div><div class="t">BIDIR 及以上会断参考链</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back">skip_frame 阶梯里只有 <code>NONREF</code> 无损；
-        <code>BIDIR</code> 误伤参考 B、<code>NONKEY</code> 只留关键帧，
-        只能配合「丢到下一个关键帧」的粗放策略使用。</div>
-    </div></div>
-    <div class="flip"><div class="inner">
-      <div class="face front"><div class="no">PITFALL 07</div><div class="t">参考帧跳 loop filter 有漂移</div><div class="cue">点击翻面 ↻</div></div>
-      <div class="face back"><code>skip_loop_filter=ALL</code> 收益更大但参考帧不做去块滤波会累积误差，
-        首帧可能轻微失真；保守做法是只设到 <code>NONREF</code> 档（零风险）。</div>
-    </div></div>
+  <p class="lead">七个真实会踩的坑，每条按「<b>症状 → 原因 → 对策</b>」写，方便照着排查。点击展开。</p>
+  <div class="pits">
+    <details class="pit" id="pit1">
+      <summary><span class="pno">坑 1</span><span class="ptitle">「丢 B 帧」≠「丢非参考帧」</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>按 <code>pict_type == B</code> 丢帧，画面出现块状错乱，且一直持续到下一个关键帧才恢复。</p>
+        <p><b class="plab why">原因</b>x264/x265 <b>默认开启 b-pyramid</b>（<code>--b-pyramid normal</code>），每组连续 B 帧里有一个会被其他 B 帧参考。以 <code>bf=3</code> 为例，<code>B1 B2 B3</code> 中 B2 是「参考 B」——丢了它，参考它的 B1/B3 就解不出来。</p>
+        <p><b class="plab fix">对策</b>只按 NAL 头的<b>参考性</b>判定，别按帧类型：H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型是不是偶数（<code>_N</code> 后缀）。</p>
+      </div>
+    </details>
+    <details class="pit" id="pit2">
+      <summary><span class="pno">坑 2</span><span class="ptitle">HEVC open-GOP：CRA 后面的 RASL 必须丢</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>顺序播放一切正常，但 <b>Seek 到某些位置后头几帧花屏</b>，之后又自动恢复。</p>
+        <p><b class="plab why">原因</b><code>CRA_NUT</code>(21) 是 open-GOP 关键帧，紧随其后的 RASL 帧（类型 8/9）参考了<b>上一个 GOP</b> 的帧。顺序播放时那些帧还在 DPB 里；Seek 直接跳到 CRA 时，它们从未被解码过。</p>
+        <p><b class="plab fix">对策</b>Seek 落点是 CRA 时，把其后的 RASL 帧全部丢弃——这是<b>正确性要求，不是优化</b>。闭 GOP（IDR）流不存在这个问题。</p>
+      </div>
+    </details>
+    <details class="pit" id="pit3">
+      <summary><span class="pno">坑 3</span><span class="ptitle">HEVC 时域分层：<code>_N</code> 只保证「同子层非参考」</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>对时域分层（temporal SVC）编码的流按 <code>_N</code> 丢帧，出现花屏。</p>
+        <p><b class="plab why">原因</b><code>_N</code> 的严格含义是「<b>在自己所属的时域子层内</b>不被参考」。低层的 <code>_N</code> 帧仍可能被更高层的帧参考。</p>
+        <p><b class="plab fix">对策</b>先读 NAL 头的 <code>nuh_temporal_id_plus1</code>。绝大多数点播流只有一个时域层（该值恒为 1），此时 <code>_N</code> 就是真非参考、可以直接丢；确实分层的流，只有<b>最高层</b>的 <code>_N</code> 绝对安全。</p>
+      </div>
+    </details>
+    <details class="pit" id="pit4">
+      <summary><span class="pno">坑 4</span><span class="ptitle"><code>AV_PKT_FLAG_DISPOSABLE</code> 经常是空的</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>完全依赖这个 flag 判定，结果<b>一帧也丢不掉</b>，优化毫无效果。</p>
+        <p><b class="plab why">原因</b>它来自 MP4 的 <code>sdtp</code> box，而这是个<b>可选</b> box——逐帧记录依赖关系会让文件明显变大（实测量级在 10% 上下），所以不少封装器默认不写。</p>
+        <p><b class="plab fix">对策</b>把它当「有则走快路径」的优化，判定逻辑<b>必须有 NAL 头解析兜底</b>（<a class="apref" href="#s33">第 3 章</a>的 <code>packet_droppable()</code>）。</p>
+      </div>
+    </details>
+    <details class="pit" id="pit5">
+      <summary><span class="pno">坑 5</span><span class="ptitle">Android MediaCodec 上 <code>skip_frame</code> 设了也白设</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>设置 <code>skip_frame = AVDISCARD_NONREF</code> 之后，<b>CPU 占用和追帧耗时毫无变化</b>。</p>
+        <p><b class="plab why">原因</b>FFmpeg 的 MediaCodec 走 wrapper 模型——整包透传给系统解码器，自己不拆 NAL，源码里根本没有 <code>skip_frame</code> 的处理逻辑。</p>
+        <p><b class="plab fix">对策</b>Android 上必须自己在喂入前判定并丢包：走 FFmpeg 就在 <code>avcodec_send_packet()</code> 之前，裸调就在 <code>queueInputBuffer()</code> 之前。</p>
+      </div>
+    </details>
+    <details class="pit" id="pit6">
+      <summary><span class="pno">坑 6</span><span class="ptitle"><code>AVDISCARD_BIDIR</code> 及以上会断参考链</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>想着「更激进 = 更快」，把档位从 <code>NONREF</code> 调到 <code>BIDIR</code>，追帧确实更快了，<b>但画面开始花屏</b>。</p>
+        <p><b class="plab why">原因</b><code>BIDIR</code> 丢掉<b>所有</b> B 帧，其中就包含被别的 B 帧参考的「参考 B」（见<a class="apref" href="#pit1">坑 1</a>）；<code>NONINTRA</code>/<code>NONKEY</code> 更激进，破坏更彻底。</p>
+        <p><b class="plab fix">对策</b>追帧只用 <code>NONREF</code>——阶梯里<b>唯一无损</b>的档位。更激进的档位只适合「连续拖动预览」这种能接受画面停在关键帧的场景。</p>
+      </div>
+    </details>
+    <details class="pit" id="pit7">
+      <summary><span class="pno">坑 7</span><span class="ptitle">参考帧跳过 loop filter 会累积漂移</span></summary>
+      <div class="pbody">
+        <p><b class="plab sym">症状</b>追帧结束后的<b>首帧比正常播放时糊一点</b>、有轻微块感。</p>
+        <p><b class="plab why">原因</b><code>skip_loop_filter = ALL</code> 让<b>参考帧</b>也跳过去块滤波，解出来的像素与编码器当初使用的参考不一致，误差会沿参考链逐帧累积。</p>
+        <p><b class="plab fix">对策</b>保守用 <code>AVDISCARD_NONREF</code> 档——只跳非参考帧的滤波，反正没人参考它们，零风险。</p>
+      </div>
+    </details>
   </div>
 </section>
 
 <!-- ==================== CH 8 ==================== -->
 <section class="chapter" id="ch8">
   <div class="chap-head"><span class="no">08</span><h2>总结与源码索引</h2></div>
-  <h3>Q1 · 丢非参考帧，解码器支持吗？</h3>
-  <ul>
-    <li><strong>FFmpeg 软解 / hwaccel 模型</strong>：原生支持——
-      <code>skip_frame = AVDISCARD_NONREF</code>，丢弃发生在 NAL 解析层，硬件无感；</li>
-    <li><strong>Android MediaCodec 这类 wrapper</strong>：不支持——但也不需要：非参考帧的定义保证了
-      「解码前丢包」与「解码器内跳过」效果完全等价，判定只需读 NAL 头 1~2 字节；</li>
-    <li><strong>解码前丢不掉的参考帧</strong>：用「解码不输出」（<code>DECODE_ONLY</code> /
-      <code>DoNotOutputFrame</code>）和「输出不渲染」（<code>releaseOutputBuffer(false)</code>）
-      两层兜底快速追帧。</li>
-  </ul>
-  <h3>Q2 · 参考帧与 I/B/P 的关系？</h3>
-  <ul>
-    <li><strong>互相独立的两个属性</strong>：<code>slice_type</code> 决定 I/B/P（怎么预测自己），
-      NAL 头决定参考性（是否被参考）；</li>
-    <li><strong>判定</strong>：H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型的
-      <code>_N</code> 后缀（偶数）；</li>
-    <li>B 帧可以是参考帧（b-pyramid），P/I 也可以是非参考帧——
-      <strong>安全丢帧的唯一判据是参考性，不是帧类型</strong>。</li>
-  </ul>
+  <div class="keypoint">
+    <div class="kp-tag">全文一句话</div>
+    <div class="kp-text">安全丢帧的唯一判据是<b>参考性</b>（这一帧会不会被别的帧参考），
+      <b>不是</b>帧类型 I/B/P；判定只要读 NAL 头的 <b>1~2 个字节</b>，不用解码。</div>
+  </div>
+
+  <div class="qa">
+    <div class="q"><span class="qn">Q1</span>丢非参考帧，解码器支持吗？</div>
+    <div class="a">
+      <p>分<b>软解</b>和<b>硬解</b>两大类看，结论都是「<b>能丢</b>」，区别只在<b>谁动手</b>。</p>
+      <p class="qsub"><span class="qtag">软解</span>用 FFmpeg 自带的 H.264 / H.265 软件解码器
+        （<a href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c" target="_blank" rel="noopener"><code>h264dec.c</code></a> /
+        <a href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c" target="_blank" rel="noopener"><code>hevcdec.c</code></a>，纯 CPU 算；
+        顺带澄清一个常见混淆：x264 / x265 是<b>编码</b>器，负责把画面压成码流，不参与解码）：</p>
+      <p>✅ <b>原生支持，一行搞定</b>——<code>avctx-&gt;skip_frame = AVDISCARD_NONREF</code>。非参考帧在 NAL
+        遍历循环的最前面就被 <code>continue</code> 掉，连熵解码都不做（第 4 章<a class="apref" href="#ap2">作用点②</a>）。</p>
+      <p class="qsub"><span class="qtag">硬解</span>交给手机的专用解码芯片算。要看<a class="apref" href="#ch5">第 5 章</a>那四种组合，
+        <b>只有第一种能白嫖这行代码</b>：</p>
+      <div class="tscroll">
+        <table class="t">
+          <tr><th>硬解组合</th><th>谁来丢非参考帧</th></tr>
+          <tr><td><b><a class="apref tabref" href="#m5-pane-1" data-m5="1">① FFmpeg + iOS VideoToolbox</a></b></td><td>✅ <b>解码器代劳</b>，同样一行 <code>skip_frame</code>——FFmpeg 仍在软件层解析 NAL，丢弃发生在提交给硬件之前</td></tr>
+          <tr><td><b><a class="apref tabref" href="#m5-pane-2" data-m5="2">② 自建 VTDecompressionSession</a></b></td><td>自己丢：绕开了 FFmpeg 解码层，没这个开关</td></tr>
+          <tr><td><b><a class="apref tabref" href="#m5-pane-3" data-m5="3">③ FFmpeg + Android MediaCodec</a></b></td><td>自己丢：<code>skip_frame</code> 设了也白设，AVPacket 是整包透传给系统解码器的</td></tr>
+          <tr><td><b><a class="apref tabref" href="#m5-pane-4" data-m5="4">④ 直接用 Android MediaCodec API</a></b></td><td>自己丢：非参考帧不 <code>queueInputBuffer</code></td></tr>
+        </table>
+      </div>
+      <p><b>自己丢一点不吃亏</b>：非参考帧的定义保证了没有任何帧需要它，谁动手丢，效果完全等价；
+        判定也只要读 1~2 个字节（见<a class="apref" href="#s33">第 3 章</a>），成本可以忽略。</p>
+      <p>解码前丢不掉的是<b>参考帧</b>（要留在 DPB 里给后面的帧当底子），改用两层兜底加速追帧：</p>
+      <ul>
+        <li><b><a class="apref" href="#ap3">解码不输出</a></b>——照常解码、照常进 DPB，只是不产出画面。
+          API 是 <code>BUFFER_FLAG_DECODE_ONLY</code>（Android 14+）和
+          <code>kVTDecodeFrame_DoNotOutputFrame</code>（iOS VideoToolbox）。注意
+          <b>FFmpeg 无论软解硬解都没暴露这个能力</b>，只有裸调平台 API 才用得上。</li>
+        <li><b><a class="apref" href="#ap4">输出不渲染</a></b>——画面已经解出来了，只是不送上屏幕，
+          省掉纹理上传和 GL 绘制，<b>任何平台、任何解码方式都能做</b>，是最后一道兜底。
+          软解 / Android MediaCodec / iOS VideoToolbox 三种写法，见
+          <a class="apref" href="#ap4-how">第 4 章「输出但不渲染」具体怎么做</a>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q"><span class="qn">Q2</span>参考帧与 I/B/P 是什么关系？</div>
+    <div class="a">
+      <p><b>两个互相独立的属性</b>，谁也推不出谁：</p>
+      <ul>
+        <li><code>slice_type</code> 决定 I/B/P——说的是<b>这一帧怎么参考别人</b>；</li>
+        <li>NAL 头决定参考性——说的是<b>这一帧会不会被别人参考</b>。</li>
+      </ul>
+      <p>判定：H.264 看 <code>nal_ref_idc == 0</code>，H.265 看 VCL 类型是不是偶数（<code>_N</code> 后缀）。
+        B 帧可以是参考帧（b-pyramid 的中层 B），I/P 也可以是非参考帧——所以
+        <b>按帧类型丢帧迟早翻车</b>（见<a class="apref" href="#pit1">坑 1</a>）。</p>
+    </div>
+  </div>
 
   <h3>FFmpeg 源码索引</h3>
   <div class="tscroll">
@@ -1287,12 +1473,11 @@ function visLoop(el, tick) {
   }, { rootMargin: '-35% 0px -55% 0px' });
   $$('section.chapter').forEach(s => io.observe(s));
 
-  $$('.flip').forEach(f => f.addEventListener('click', () => f.classList.toggle('flipped')));
-
   /* 第5章→第4章作用点跳转：落点行闪一下，免得读者不知道该看哪一行 */
   $$('.apref').forEach(a => a.addEventListener('click', () => {
     const el = $(a.getAttribute('href'));
     if (!el) return;
+    if (el.tagName === 'DETAILS') el.open = true;   /* 跳到踩坑条目时顺手展开 */
     el.classList.remove('flash');
     void el.offsetWidth;            /* 强制重排，重复点击也能重播动画 */
     el.classList.add('flash');
@@ -1635,8 +1820,21 @@ function visLoop(el, tick) {
 
   /* 四种组合的选项卡 */
   const tabs = [1, 2, 3, 4].map(i => [$('#m5-tab-' + i), $('#m5-pane-' + i)]);
-  tabs.forEach(([btn], k) => btn.addEventListener('click', () => {
-    tabs.forEach(([b, p], j) => { b.classList.toggle('on', j === k); p.classList.toggle('on', j === k); });
+  const showTab = k => tabs.forEach(([b, p], j) => {
+    b.classList.toggle('on', j === k); p.classList.toggle('on', j === k);
+  });
+  tabs.forEach(([btn], k) => btn.addEventListener('click', () => showTab(k)));
+
+  /* 正文里的「组合①~④」点一下切到对应选项卡并滚过去 */
+  $$('.tabref').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    const k = +a.dataset.m5 - 1;
+    showTab(k);
+    tabs[k][0].parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const pane = tabs[k][1];
+    pane.classList.remove('flash');
+    void pane.offsetWidth;
+    pane.classList.add('flash');
   }));
 })();
 
