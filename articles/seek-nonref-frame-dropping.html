@@ -490,7 +490,7 @@ footer .links { margin-bottom: 8px; }
   <div id="hero-bg"></div>
   <div class="kicker">VOD SEEK OPTIMIZATION</div>
   <h1>点播 Seek 性能优化<br><span class="grad">丢帧的原理、判定与硬解落地</span></h1>
-  <p class="sub">拖动进度条之后，画面多久能出来？追帧区间里有一半的帧，其实根本不用解码。
+  <p class="sub">拖动进度条之后，画面多久能出来？追帧区间里有三成到一半的帧，其实根本不用解码。
     本页把「参考链」「NAL 头判定」「四个丢帧作用点」做成可动手操作的 3D 演示。</p>
   <p class="stats-lead">全文结论就三个数字——<strong>为什么值得丢、怎么判定能丢、在哪儿丢</strong>：</p>
   <div class="stats">
@@ -879,6 +879,47 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
       只能用①（通用，自己判定）</strong>。这也是<a class="apref" href="#ch5">第 5 章</a>要展开的关键差异。</p>
   </div>
 
+  <h3 id="ap1-how">「解码前丢包」的三种落地方式</h3>
+  <p>作用点① 不依赖解码器的任何能力，是<b>硬解通用方案</b>。判定出非参考帧后在
+    <code>avcodec_send_packet()</code>（或 <code>queueInputBuffer()</code>）<b>之前</b>把整包丢掉即可，
+    解码器完全无感。三种实现，按工程成本从低到高：</p>
+  <ol>
+    <li><b>容器 flag</b>：<code>pkt-&gt;flags &amp; AV_PKT_FLAG_DISPOSABLE</code>，有 <code>sdtp</code> 时零成本，
+      但很多文件根本没这个 box（见<a class="apref" href="#pit4">坑 4</a>）；</li>
+    <li><b>自解析 NAL 头</b>：<a class="apref" href="#s33">上面那个 <code>packet_droppable()</code></a>，
+      约 30 行、无依赖，<b>推荐的兜底方案</b>；</li>
+    <li><b>FFmpeg 现成 BSF</b>（bitstream filter，码流过滤器：不解码，直接对压缩码流做删改）：
+      <code>filter_units</code> 的 <code>discard</code> 选项
+      （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/bsf/filter_units.c#L251" target="_blank" rel="noopener"><code>filter_units.c:251</code></a>），
+      判定逻辑与解码器一致——H.264 按 <code>nal_ref_idc</code>
+      （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647" target="_blank" rel="noopener"><code>cbs_h264.c:647</code></a>），
+      H.265 按 <code>_N</code> 类型表
+      （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660" target="_blank" rel="noopener"><code>cbs_h265.c:660</code></a>）。
+      包内 VCL 全被删掉时 BSF 返回 <code>EAGAIN</code>（「暂无输出」），整包自动被吞掉。</li>
+  </ol>
+  <p>动手改代码之前，可以先用命令行数一数<b>这条流到底能省多少帧</b>：</p>
+  <div class="codeblock">
+    <button class="copy-btn" data-copy="cp-bsf">复制</button>
+<pre id="cp-bsf"><code><span class="cm"># 丢掉非参考帧后还剩多少帧（和原始帧数对比，就是收益上限）</span>
+ffmpeg -i in.mp4 -c:v copy -bsf:v filter_units=discard=nonref -f null -</code></pre>
+  </div>
+
+  <h3 id="ap3-how">「解码但不输出」有哪些 API</h3>
+  <p>追帧区间里的<b>参考帧</b>没法不解码，但可以不让它走完「输出」这段路——输出路径
+    （像素拷贝、跨进程 buffer 流转、回调）在硬解上并不便宜：</p>
+  <ul>
+    <li><b>Android 14+（API 34）</b>：<code>queueInputBuffer</code> 时带
+      <code>MediaCodec.BUFFER_FLAG_DECODE_ONLY</code>——专为 Seek preroll 设计：解码、更新参考状态，
+      但不产生输出 buffer；</li>
+    <li><b>iOS</b>：<code>VTDecompressionSessionDecodeFrame</code> 传
+      <code>kVTDecodeFrame_DoNotOutputFrame</code>——同样是「解码入 DPB 但不回调输出」。</li>
+  </ul>
+  <div class="note warn"><b>注意这一层 FFmpeg 用不上</b>：无论软解还是硬解，FFmpeg 都没有把这两个平台开关
+    暴露成自己的 API（源码里搜不到任何 <code>DECODE_ONLY</code> / <code>DoNotOutputFrame</code> 的使用）。
+    想用它，只能裸调平台 API——也就是<a class="apref" href="#ch5">第 5 章</a>的
+    <a class="apref tabref" href="#m5-pane-2" data-m5="2">组合②</a>和
+    <a class="apref tabref" href="#m5-pane-4" data-m5="4">组合④</a>。</div>
+
   <h3 id="ap4-how">「输出但不渲染」具体怎么做</h3>
   <p>作用点④ 是唯一<b>任何平台、任何解码方式都能用</b>的兜底，值得单独讲清楚。先看「渲染」到底包含哪几步——
     只有知道省的是什么，才知道这一层值不值：</p>
@@ -962,7 +1003,7 @@ codec.releaseOutputBuffer(outIndex, <span class="kw">true</span>);</code></pre>
 <section class="chapter" id="ch5">
   <div class="chap-head"><span class="no">05</span><h2>硬解落地：四种组合，各自怎么丢帧</h2></div>
   <p class="lead">用硬解要先定两件事：<strong>用哪个平台的硬解</strong>（Android <code>MediaCodec</code> /
-    iOS <code>VideoToolbox</code>），以及<strong>怎么调用它</strong>（让 FFmpeg 替你调，还是自己裸调平台 API）。
+    iOS <code>VideoToolbox</code>），以及<strong>怎么调用它</strong>（让 FFmpeg 替你调，还是自己裸调平台 API——裸调只是绕开 FFmpeg 的<b>解码层</b>，解封装通常还是交给它）。
     两两组合，就是下面四种用法：</p>
   <div class="tscroll">
     <table class="t">
@@ -1039,9 +1080,9 @@ codec.releaseOutputBuffer(outIndex, <span class="kw">true</span>);</code></pre>
       </div>
     </div>
 
-    <div class="note">一句话：<b>只有「FFmpeg + VideoToolbox」这一种组合能白嫖 <code>skip_frame</code>，
-      其余三种都得自己在解码前判定并丢包</b>。特别注意 Android：<b>无论走不走 FFmpeg 都逃不掉自己丢</b>——
-      NAL 解析始终发生在系统解码器内部，你和 FFmpeg 都插不上手。好在判定只要读 NAL 头 1~2 字节，成本极低。</div>
+    <div class="note">上图四张架构图对应四种组合：<b>只有第一张</b>（FFmpeg 仍在软件层拆 NAL）
+      能让 <code>skip_frame</code> 拦下非参考帧；另外三张里 NAL 解析要么在系统解码器内部、要么根本没经过 FFmpeg，
+      你和 FFmpeg 都插不上手。下面按组合逐个看具体怎么写。</div>
 
     <h3>四种组合各自怎么落地</h3>
     <div class="tabs">
@@ -1110,7 +1151,7 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFa
             （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>mediacodec.h:86</code></a>）</td></tr>
         </table>
       </div>
-      <div class="note">想用上 <a class="apref" href="#ap3">③ 解码不输出</a> 和超实时解码，就得改走组合 ④（裸调 MediaCodec）。</div>
+      <div class="note">想用上 <a class="apref" href="#ap3">③ 解码不输出</a> 和超实时解码，就得改走组合 ④（裸调 Android MediaCodec）。</div>
     </div>
 
     <div class="tabpane" id="m5-pane-4">
@@ -1245,6 +1286,25 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime *
       <div id="m6-desc">点「下一步」开始步进。</div>
     </div>
     <div id="m6-code"></div>
+  </div>
+
+  <h3>收益与风险对照</h3>
+  <p>把上面这套手段摊开看，<b>只有第一行是零画质代价的</b>，其余要么只省输出/渲染开销、
+    要么要接受画面停在关键帧：</p>
+  <div class="tscroll">
+    <table class="t">
+      <tr><th>手段</th><th>追帧提速（典型）</th><th>画质风险</th><th>备注</th></tr>
+      <tr><td>丢非参考帧（<a class="apref" href="#ap1">①</a>/<a class="apref" href="#ap2">②</a>）</td>
+        <td>1.5x ~ 2x</td><td style="color:var(--ref)"><b>无</b></td><td>上限取决于非参考帧占比</td></tr>
+      <tr><td>解码不输出（<a class="apref" href="#ap3">③</a>）</td>
+        <td>视输出路径开销</td><td>无</td><td>硬解收益明显</td></tr>
+      <tr><td>输出不渲染（<a class="apref" href="#ap4">④</a>）</td>
+        <td>省 GL/上屏</td><td>无</td><td>必备兜底</td></tr>
+      <tr><td>超实时解码（operating rate）</td>
+        <td>1x ~ 3x</td><td>无</td><td>厂商实现差异大</td></tr>
+      <tr><td><code>NONKEY</code> 粗放快进</td>
+        <td>~GOP 倍数</td><td style="color:var(--warn)">只能停在关键帧</td><td>连续拖动预览适用</td></tr>
+    </table>
   </div>
 </section>
 
@@ -1388,6 +1448,8 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime *
       <tr><td>CBS 丢弃判定（H.264/H.265）</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647" target="_blank" rel="noopener"><code>libavcodec/cbs_h264.c:647</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660" target="_blank" rel="noopener"><code>libavcodec/cbs_h265.c:660</code></a></td></tr>
       <tr><td>MP4 sdtp → DISPOSABLE flag</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806" target="_blank" rel="noopener"><code>libavformat/mov.c:11806</code></a></td></tr>
       <tr><td>Android MediaCodec 渲染控制 API</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>libavcodec/mediacodec.h:86</code></a></td></tr>
+      <tr><td>MediaCodec buffer 释放（render=0）</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodecdec_common.c#L289" target="_blank" rel="noopener"><code>libavcodec/mediacodecdec_common.c:289</code></a></td></tr>
+      <tr><td>skip_frame 命令行选项表</td><td><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/options_table.h#L260" target="_blank" rel="noopener"><code>libavcodec/options_table.h:260</code></a></td></tr>
     </table>
   </div>
 </section>

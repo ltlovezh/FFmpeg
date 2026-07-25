@@ -71,7 +71,7 @@ t_decode ：单帧解码耗时
 
 - **少解码**：把追帧区间里"没人依赖"的帧直接丢掉——本文主题；
 - **快解码**：让解码器远快于播放速度地跑，即"超实时解码"（Android 的
-  `KEY_OPERATING_RATE`、iOS 的异步解码等），第 5 节顺带覆盖。
+  `KEY_OPERATING_RATE`、iOS 的异步解码等），[第 5 章](#5-硬解落地四种组合各自怎么丢帧)顺带覆盖。
 
 丢帧的前提是搞清楚：**丢掉一帧，会不会破坏后面帧的解码？** 这就引出参考
 帧的概念。
@@ -442,7 +442,7 @@ static int packet_droppable(const uint8_t *data, int size,
 
 关键是分清**"输出"和"渲染"是两件事**："输出"是解码器交货、你拿到
 这帧数据；"渲染"是把这帧数据画到屏幕。正因为可以"拿到但不画"、甚至
-"解了但不交货"，丢帧才有了下面④和③两个额外的作用点。
+"解了但不交货"，丢帧才有了下面 [③](#43-作用点解码但不输出追参考帧时的兜底) 和 [④](#44-作用点输出但不渲染最后的兜底) 两个额外的作用点。
 
 同一帧可以在这条流水线的四个位置被丢掉，**越早丢省得越多**：
 
@@ -546,8 +546,8 @@ if (s->avctx->skip_frame >= AVDISCARD_ALL ||
 
 ### 4.2 作用点①：解码前丢包（硬解通用方案）
 
-硬解码器（Android 的 MediaCodec、iOS 的 VideoToolbox——对使用者是黑盒：只能喂数据、取
-结果，无法干预内部行为）没有 `skip_frame` 这样的开关，但这不重要——
+系统硬解码器（Android 的 MediaCodec、iOS 的 VideoToolbox）对使用者只开放
+"喂数据、取结果"这两个动作，没有 `skip_frame` 这样的开关，但这不重要——
 **非参考帧的定义本身就保证了解码器不需要它**。在 demux（解封装）之后、
 喂入解码器之前把整包丢掉，解码器完全无感：
 
@@ -561,7 +561,8 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 三种实现，按工程成本排序：
 
-1. **容器 flag**：`pkt->flags & AV_PKT_FLAG_DISPOSABLE`，有 `sdtp` 时零成本；
+1. **容器 flag**：`pkt->flags & AV_PKT_FLAG_DISPOSABLE`，有 `sdtp` 时零成本，
+   但很多文件根本没这个 box（见[坑 4](#坑-4av_pkt_flag_disposable-经常是空的)）；
 2. **自解析 NAL 头**：[3.3](#33-判定代码一个包au能不能整包丢) 的函数，~30 行，无依赖，推荐兜底方案；
 3. **FFmpeg 现成 BSF**（bitstream filter，码流过滤器：不解码，直接对
    压缩码流做删改）：`filter_units` 的 `discard` 选项
@@ -585,6 +586,11 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
   更新参考状态，但不产生输出 buffer；
 - **iOS**：`VTDecompressionSessionDecodeFrame` 传
   `kVTDecodeFrame_DoNotOutputFrame`——同样是"解码入 DPB 但不回调输出"。
+
+**注意这一层 FFmpeg 用不上**：无论软解还是硬解，FFmpeg 都没有把这两个
+平台开关暴露成自己的 API（源码里搜不到任何 `DECODE_ONLY` /
+`DoNotOutputFrame` 的使用）。想用它，只能裸调平台 API——也就是[第 5 章](#5-硬解落地四种组合各自怎么丢帧)
+的组合②和组合④。
 
 ### 4.4 作用点④：输出但不渲染（最后的兜底）
 
@@ -871,7 +877,8 @@ while (read_and_decode(&frame)) {
 }
 ```
 
-收益与风险对照：
+收益与风险对照——**只有第一行是零画质代价的**，其余要么只省输出/渲染开销、
+要么要接受画面停在关键帧：
 
 | 手段 | 追帧提速（典型） | 画质风险 | 备注 |
 | --- | --- | --- | --- |
@@ -1023,4 +1030,5 @@ while (read_and_decode(&frame)) {
 | CBS 丢弃判定（H.264/H.265） | [`libavcodec/cbs_h264.c:647`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h264.c#L647)、[`libavcodec/cbs_h265.c:660`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/cbs_h265.c#L660) |
 | MP4 sdtp → DISPOSABLE flag | [`libavformat/mov.c:11806`](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/mov.c#L11806) |
 | Android MediaCodec 渲染控制 API | [`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86) |
+| MediaCodec buffer 释放（render=0） | [`libavcodec/mediacodecdec_common.c:289`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodecdec_common.c#L289) |
 | skip_frame 命令行选项表 | [`libavcodec/options_table.h:260`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/options_table.h#L260) |
