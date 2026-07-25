@@ -1166,6 +1166,73 @@ static int mov_read_dec3(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return 0;
 }
 
+/* Maps the DTS `StreamConstruction` field (ETSI TS 102 114 Table E-2) to the
+ * coarse FFmpeg DTS profile enum. Extension-substream XLL maps to HD_MA;
+ * extension-substream XXCH, X96, or XBR maps to HD_HRA; core-substream XCH or
+ * XXCH maps to ES; core-substream X96 maps to 96/24; a core component alone
+ * maps to DTS; and extension-substream LBR maps to Express. Value 0 (undefined)
+ * and values outside 1..21 map to AV_PROFILE_UNKNOWN. */
+static int mov_dts_stream_construction_to_profile(unsigned int sc)
+{
+    static const int profile[22] = {
+        [ 1] = AV_PROFILE_DTS,            /* core Core                         */
+        [ 2] = AV_PROFILE_DTS_ES,         /* core Core + core XCH              */
+        [ 3] = AV_PROFILE_DTS_ES,         /* core Core + core XXCH             */
+        [ 4] = AV_PROFILE_DTS_96_24,      /* core Core + core X96              */
+        [ 5] = AV_PROFILE_DTS_HD_HRA,     /* core Core + ext XXCH              */
+        [ 6] = AV_PROFILE_DTS_HD_HRA,     /* core Core + ext XBR               */
+        [ 7] = AV_PROFILE_DTS_HD_HRA,     /* core Core + core XCH + ext XBR    */
+        [ 8] = AV_PROFILE_DTS_HD_HRA,     /* core Core + core XXCH + ext XBR   */
+        [ 9] = AV_PROFILE_DTS_HD_HRA,     /* core Core + ext XXCH + ext XBR    */
+        [10] = AV_PROFILE_DTS_HD_HRA,     /* core Core + ext X96               */
+        [11] = AV_PROFILE_DTS_HD_HRA,     /* core Core + core XCH + ext X96    */
+        [12] = AV_PROFILE_DTS_HD_HRA,     /* core Core + core XXCH + ext X96   */
+        [13] = AV_PROFILE_DTS_HD_HRA,     /* core Core + ext XXCH + ext X96    */
+        [14] = AV_PROFILE_DTS_HD_MA,      /* core Core + ext XLL               */
+        [15] = AV_PROFILE_DTS_HD_MA,      /* core Core + core XCH + ext XLL    */
+        [16] = AV_PROFILE_DTS_HD_MA,      /* core Core + core X96 + ext XLL    */
+        [17] = AV_PROFILE_DTS_HD_MA,      /* ext XLL                           */
+        [18] = AV_PROFILE_DTS_EXPRESS,    /* ext LBR                           */
+        [19] = AV_PROFILE_DTS,            /* ext Core                          */
+        [20] = AV_PROFILE_DTS_HD_HRA,     /* ext Core + ext XXCH               */
+        [21] = AV_PROFILE_DTS_HD_MA,      /* ext Core + ext XLL                */
+    };
+    if (!sc || sc > 21)
+        return AV_PROFILE_UNKNOWN;
+    return profile[sc];
+}
+
+/* Maps the 16-bit DTS `ChannelLayout` bitmask (ETSI TS 102 114 Table E-5) to an
+ * ffmpeg channel mask. Pair bits follow Table 7-10 / DCA_SPEAKER_PAIR_*;
+ * LwRw (0x0400) and LssRss (0x0800) must not collapse onto SIDE like LsRs. */
+static uint64_t mov_dts_channel_layout_to_mask(unsigned int code)
+{
+    static const struct { unsigned int dts; uint64_t av; } map[] = {
+        { 0x0001, AV_CH_FRONT_CENTER },
+        { 0x0002, AV_CH_FRONT_LEFT  | AV_CH_FRONT_RIGHT },
+        { 0x0004, AV_CH_SIDE_LEFT   | AV_CH_SIDE_RIGHT },
+        { 0x0008, AV_CH_LOW_FREQUENCY },
+        { 0x0010, AV_CH_BACK_CENTER },
+        { 0x0020, AV_CH_TOP_FRONT_LEFT  | AV_CH_TOP_FRONT_RIGHT },
+        { 0x0040, AV_CH_BACK_LEFT   | AV_CH_BACK_RIGHT },
+        { 0x0080, AV_CH_TOP_FRONT_CENTER },
+        { 0x0100, AV_CH_TOP_CENTER },
+        { 0x0200, AV_CH_FRONT_LEFT_OF_CENTER | AV_CH_FRONT_RIGHT_OF_CENTER },
+        { 0x0400, AV_CH_WIDE_LEFT   | AV_CH_WIDE_RIGHT },
+        { 0x0800, AV_CH_SIDE_SURROUND_LEFT | AV_CH_SIDE_SURROUND_RIGHT },
+        { 0x1000, AV_CH_LOW_FREQUENCY_2 },
+        { 0x2000, AV_CH_TOP_SIDE_LEFT    | AV_CH_TOP_SIDE_RIGHT },
+        { 0x4000, AV_CH_TOP_BACK_CENTER },
+        { 0x8000, AV_CH_TOP_BACK_LEFT    | AV_CH_TOP_BACK_RIGHT },
+    };
+    uint64_t mask = 0;
+    int i;
+    for (i = 0; i < FF_ARRAY_ELEMS(map); i++)
+        if (code & map[i].dts)
+            mask |= map[i].av;
+    return mask;
+}
+
 static int mov_read_ddts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
 #define DDTS_SIZE 20
@@ -1173,6 +1240,9 @@ static int mov_read_ddts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     AVStream *st = NULL;
     uint32_t frame_duration_code = 0;
     uint32_t channel_layout_code = 0;
+    uint64_t channel_layout_mask;
+    unsigned int stream_construction;
+    unsigned int representation_type;
     GetBitContext gb;
     int ret;
 
@@ -1195,7 +1265,12 @@ static int mov_read_ddts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     st->codecpar->bit_rate = get_bits_long(&gb, 32);
     st->codecpar->bits_per_coded_sample = get_bits(&gb, 8);
     frame_duration_code = get_bits(&gb, 2);
-    skip_bits(&gb, 30); /* various fields */
+    stream_construction = get_bits(&gb, 5); /* Table E-2 - profile source */
+    skip_bits(&gb, 1);  /* CoreLFEPresent */
+    skip_bits(&gb, 6);  /* CoreLayout */
+    skip_bits(&gb, 14); /* CoreSize */
+    skip_bits(&gb, 1);  /* StereoDownmix */
+    representation_type = get_bits(&gb, 3);
     channel_layout_code = get_bits(&gb, 16);
 
     st->codecpar->frame_size =
@@ -1204,17 +1279,18 @@ static int mov_read_ddts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             (frame_duration_code == 2) ? 2048 :
             (frame_duration_code == 3) ? 4096 : 0;
 
-    if (channel_layout_code > 0xff) {
-        av_log(c->fc, AV_LOG_WARNING, "Unsupported DTS audio channel layout\n");
+    /* Publish StreamConstruction as codecpar->profile, including for encrypted
+     * tracks where frame headers cannot be inspected. */
+    st->codecpar->profile = mov_dts_stream_construction_to_profile(stream_construction);
+
+    channel_layout_mask = mov_dts_channel_layout_to_mask(channel_layout_code);
+    if (channel_layout_mask) {
+        av_channel_layout_uninit(&st->codecpar->ch_layout);
+        av_channel_layout_from_mask(&st->codecpar->ch_layout, channel_layout_mask);
+    } else if (representation_type == 2 || representation_type == 3) {
+        av_channel_layout_uninit(&st->codecpar->ch_layout);
+        st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
     }
-    av_channel_layout_uninit(&st->codecpar->ch_layout);
-    av_channel_layout_from_mask(&st->codecpar->ch_layout,
-            ((channel_layout_code & 0x1) ? AV_CH_FRONT_CENTER : 0) |
-            ((channel_layout_code & 0x2) ? AV_CH_FRONT_LEFT : 0) |
-            ((channel_layout_code & 0x2) ? AV_CH_FRONT_RIGHT : 0) |
-            ((channel_layout_code & 0x4) ? AV_CH_SIDE_LEFT : 0) |
-            ((channel_layout_code & 0x4) ? AV_CH_SIDE_RIGHT : 0) |
-            ((channel_layout_code & 0x8) ? AV_CH_LOW_FREQUENCY : 0));
 
     return 0;
 }
@@ -2623,6 +2699,37 @@ static MovTref *mov_add_tref_tag(MOVStreamContext *sc, uint32_t name)
     return tag;
 }
 
+static int mov_read_cdsc(MOVContext* c, AVIOContext* pb, MOVAtom atom)
+{
+    AVStream* st;
+    MOVStreamContext* sc;
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+
+    if (atom.size > 4) {
+        av_log(c->fc, AV_LOG_ERROR, "Only a single tref of type cdsc is supported\n");
+        return AVERROR_PATCHWELCOME;
+    }
+    if (atom.size < 4)
+        return AVERROR_INVALIDDATA;
+
+    st = get_curr_st(c);
+    if (!st)
+        return AVERROR_INVALIDDATA;
+    sc = st->priv_data;
+
+    MovTref *tag = mov_add_tref_tag(sc, atom.type);
+    if (!tag)
+        return AVERROR(ENOMEM);
+
+    int ret = mov_add_tref_id(tag, avio_rb32(pb));
+    if (ret < 0)
+        return ret;
+
+    return 0;
+}
+
 static int mov_read_sbas(MOVContext* c, AVIOContext* pb, MOVAtom atom)
 {
     AVStream* st;
@@ -3053,6 +3160,33 @@ static int mov_parse_stsd_data(MOVContext *c, AVIOContext *pb,
                     }
                 }
             }
+        }
+    } else if (st->codecpar->codec_id == AV_CODEC_ID_ITUT_T35) {
+        int t35_identifier_length = avio_r8(pb);
+
+        if (t35_identifier_length <= 0 || t35_identifier_length >= size)
+            return AVERROR_INVALIDDATA;
+
+        ret = ff_get_extradata(c->fc, st->codecpar, pb, t35_identifier_length);
+        if (ret < 0)
+            return ret;
+
+        int hrsd_len = size - t35_identifier_length - 1;
+        if (hrsd_len > 0) {
+            uint8_t *hrsd_str = av_malloc(hrsd_len + 1);
+            if (!hrsd_str)
+                return AVERROR(ENOMEM);
+
+            ret = ffio_read_size(pb, hrsd_str, hrsd_len);
+            if (ret < 0) {
+                av_free(hrsd_str);
+                return ret;
+            }
+            if (hrsd_str[0]) {
+                hrsd_str[hrsd_len] = 0;
+                ret = av_dict_set(&st->metadata, "description", hrsd_str, AV_DICT_DONT_OVERWRITE);
+            }
+            av_free(hrsd_str);
         }
     } else {
         /* other codec type, just skip (rtp, mp4s ...) */
@@ -9749,6 +9883,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('a','v','c','C'), mov_read_glbl },
 { MKTAG('p','a','s','p'), mov_read_pasp },
 { MKTAG('c','l','a','p'), mov_read_clap },
+{ MKTAG('c','d','s','c'), mov_read_cdsc },
 { MKTAG('s','b','a','s'), mov_read_sbas },
 { MKTAG('v','d','e','p'), mov_read_vdep },
 { MKTAG('s','i','d','x'), mov_read_sidx },
@@ -11074,6 +11209,53 @@ static AVStream *mov_find_reference_track(AVFormatContext *s, AVStream *st,
     return NULL;
 }
 
+static int mov_parse_cdsc_streams(AVFormatContext *s)
+{
+    int err;
+
+    // Don't try to add a group if there's only one track
+    if (s->nb_streams <= 1)
+        return 0;
+
+    for (int i = 0; i < s->nb_streams; i++) {
+        AVStreamGroup *stg;
+        AVStream *st = s->streams[i];
+        AVStream *st_ref;
+        MOVStreamContext *sc = st->priv_data;
+        MovTref *tag = mov_find_tref_tag(sc, MKTAG('c','d','s','c'));
+
+        if (!tag)
+            continue;
+
+        st_ref = mov_find_reference_track(s, st, tag->id, tag->nb_id, 0);
+        if (!st_ref) {
+            int loglevel = (s->error_recognition & AV_EF_EXPLODE) ? AV_LOG_ERROR : AV_LOG_WARNING;
+            av_log(s, loglevel, "Failed to find referenced stream\n");
+            if (s->error_recognition & AV_EF_EXPLODE)
+                return AVERROR_INVALIDDATA;
+            continue;
+        }
+
+        stg = avformat_stream_group_create(s, AV_STREAM_GROUP_PARAMS_TREF, NULL);
+        if (!stg)
+            return AVERROR(ENOMEM);
+
+        stg->id = st->id;
+
+        err = avformat_stream_group_add_stream(stg, st_ref);
+        if (err < 0)
+            return err;
+
+        err = avformat_stream_group_add_stream(stg, st);
+        if (err < 0)
+            return err;
+
+        stg->params.tref->metadata_index = stg->nb_streams - 1;
+    }
+
+    return 0;
+}
+
 static int mov_parse_lcevc_streams(AVFormatContext *s)
 {
     int err;
@@ -11293,6 +11475,11 @@ static int mov_read_header(AVFormatContext *s)
                 mov_read_rtmd_track(s, s->streams[i]);
             }
     }
+
+    /* Create metadata stream groups. */
+    err = mov_parse_cdsc_streams(s);
+    if (err < 0)
+        return err;
 
     /* copy timecode metadata from tmcd tracks to the related video streams */
     err = mov_parse_tmcd_streams(s);
@@ -11666,8 +11853,11 @@ static int mov_finalize_packet(AVFormatContext *s, AVStream *st, AVIndexEntry *s
         int64_t total = av_rescale_q(st->duration, st->time_base, (AVRational){ 1, st->codecpar->sample_rate });
         int64_t duration = pkt->duration;
 
-        if (av_sat_add64(pkt->pts, pkt->duration) > st->duration)
-            duration = st->duration - pkt->pts;
+        if (st->duration < pkt->pts) {
+            duration = 0;
+        } else
+            duration = FFMIN(duration, (uint64_t)st->duration - pkt->pts);
+
         duration = av_rescale_q(duration, st->time_base, (AVRational){ 1, st->codecpar->sample_rate });
 
         if (!ffstream(st)->first_discard_sample)
