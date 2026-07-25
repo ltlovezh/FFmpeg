@@ -1,2 +1,6 @@
 # 本地编辑器配置，不入库
 .obsidian/
+
+# RGB/YUV 实验站：deploy-site/ 是 750MB+ 的构建产物，
+# .env.local / .vercel 含密钥和部署配置，整目录不入库
+rgb-yuv-learning-lab/
