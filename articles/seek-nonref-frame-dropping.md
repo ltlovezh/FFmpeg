@@ -602,33 +602,55 @@ AVPacket ──> [ 3.3 的 packet_droppable()? ──丢──> 释放 ]
 
 ---
 
-## 5. 硬解落地：为什么 iOS 顺手、Android 要自己动手
+## 5. 硬解落地：四种组合，各自怎么丢帧
 
-### 5.1 关键架构差异：hwaccel 模型 vs wrapper 模型
+### 5.1 先分清：四种组合
+
+用硬解要先定两件事：
+
+1. **用哪个平台的硬解**——Android 的 `MediaCodec`，还是 iOS 的
+   `VideoToolbox`；
+2. **怎么调用它**——让 FFmpeg 替你调（你的代码只面向
+   `avcodec_send_packet` / `avcodec_receive_frame`），还是自己裸调平台
+   API（绕开 FFmpeg 解码层，通常仍用它做解封装）。
+
+两两组合，就是下面四种用法：
+
+| | 通过 FFmpeg 调用 | 自己裸调平台 API |
+| --- | --- | --- |
+| **iOS VideoToolbox** | **① FFmpeg + VideoToolbox** | **② 自建 VTDecompressionSession** |
+| **Android MediaCodec** | **③ FFmpeg + MediaCodec** | **④ 直接用 MediaCodec API** |
+
+**结论先给**：第 4 章的 **② 解码器内跳过**（一行 `skip_frame` 就能丢帧）
+**只在组合①有效**；组合②③④ 都得退回到 **① 解码前丢包**——自己读 NAL 头
+判定、把非参考帧丢掉。特别注意 Android：**无论走不走 FFmpeg 都逃不掉自己丢**。
+
+好在判定只要读 NAL 头 1~2 字节（3.3），成本极低。下面先解释这个差异
+从哪来，再逐个展开四种组合各自的落地手段。
+
+#### 为什么只有组合①能白嫖 skip_frame
 
 先补一个背景：解码一帧其实包含两类活——**"读懂码流"**（解析各级
 头部、搞清帧类型和参考关系，轻量的逻辑活）和**"重建像素"**（拿参考帧
-加差异数据把整幅画面算出来，真正吃算力的活）。FFmpeg 接入硬解的两种
-模型，区别就在**这两类活分别由谁干**：
+加差异数据把整幅画面算出来，真正吃算力的活）。
 
-- **hwaccel 模型**（hardware acceleration，硬件加速；如 iOS 的
-  VideoToolbox、VAAPI、NVDEC）：FFmpeg 仍是"主厨"——"读懂码流"照做，
+`skip_frame` 是 **FFmpeg 解码器的字段**，它能不能生效，取决于
+**"读懂码流"这一步是谁干的**：
+
+- **组合②④（裸调平台 API）**：压根不用 FFmpeg 解码，自然没有这个字段；
+- **组合①（hwaccel 模型）**：FFmpeg 仍是"主厨"——"读懂码流"照做，
   只把"重建像素"外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，
-  `skip_frame` 的丢帧判定就发生在这一步——被丢的 NAL 根本不会提交给
-  硬件，所以生效；
-- **wrapper 模型**（包装；如 Android 的 MediaCodec）：两类活全部在
-  系统解码器内部完成，FFmpeg 只是"传菜员"——整包压缩数据原样递进去、
-  解码结果端出来，中间不拆开看，连 NAL 都碰不到。`skip_frame` 自然
-  无处生效——丢帧只能发生在解码之前（作用点①）。
-
-`skip_frame` 在两者上的行为截然不同——这是本文最值得记住的工程结论
-之一：
+  `skip_frame` 的丢帧判定就发生在这一步，被丢的 NAL 根本不会提交给
+  硬件，所以 ✅ 生效；
+- **组合③（wrapper 模型）**：两类活全部在系统解码器内部完成，FFmpeg
+  只是"传菜员"——整包压缩数据原样递进去、解码结果端出来，中间不拆开
+  看，连 NAL 都碰不到，`skip_frame` ❌ 自然无处生效。
 
 ```mermaid
 flowchart TB
     subgraph W["wrapper 模型（Android MediaCodec）"]
         P2["AVPacket"] --> M1["mediacodecdec.c<br/>整包透传，不拆 NAL"]
-        M1 --> M2["系统 MediaCodec 解码器<br/>（NAL 解析+解码都在内部）"]
+        M1 --> M2["Android 系统 MediaCodec 解码器<br/>（NAL 解析+解码都在内部）"]
         M2 --> M3["输出 buffer"]
     end
     subgraph H["hwaccel 模型（VideoToolbox / VAAPI / NVDEC）"]
@@ -641,22 +663,77 @@ flowchart TB
     style M1 fill:#e74,color:#fff
 ```
 
+FFmpeg 接入硬解的这两种模型，官方词汇分别叫 hwaccel 和 wrapper：
+
 | 模型 | 例子 | `skip_frame=NONREF` | 原因 |
 | --- | --- | --- | --- |
 | hwaccel | **VideoToolbox**、VAAPI（Linux）、D3D11VA（Windows）、NVDEC（NVIDIA） | ✅ 生效 | NAL 解析和丢弃决策在 FFmpeg 软件层完成，[`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) 的 `continue` 发生在任何 hwaccel 回调之前，被丢的 NAL 根本不会提交给硬件 |
 | wrapper | **Android MediaCodec**（`mediacodecdec.c`） | ❌ 不生效 | 整包透传给系统解码器，FFmpeg 不拆 NAL；wrapper 源码中没有任何 `skip_frame` 处理 |
 
-所以：**iOS 上走 FFmpeg + videotoolbox hwaccel，设置
-`skip_frame = AVDISCARD_NONREF` 一行代码就完成了解码前丢帧；Android
-MediaCodec 必须在解码前自己丢（4.2）**。
+### 5.2 组合①：FFmpeg + VideoToolbox（iOS · 走 FFmpeg）
 
-### 5.2 Android MediaCodec：三层手段 + 超实时解码
+**四种组合里唯一能白嫖 `skip_frame` 的**，追帧就一行：
 
-| 层次 | API | 版本 | 效果 |
+```c
+avctx->skip_frame = AVDISCARD_NONREF;   /* 追帧开始 */
+/* ... 追上目标后 ... */
+avctx->skip_frame = AVDISCARD_DEFAULT;  /* 恢复 */
+```
+
+被丢的非参考 NAL 在 FFmpeg 软件层
+（[`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626)）
+就被 `continue` 掉，根本不会提交给 VideoToolbox，硬件完全无感。追帧期还
+可以叠加 4.1 的 `skip_loop_filter = AVDISCARD_NONREF`。
+
+各作用点在这条路上的可用性：
+
+| 手段 | 可用？ | 怎么做 |
+| --- | --- | --- |
+| **丢掉非参考帧** | ✅ | 走第 4 章的 **② 解码器内跳过**：`skip_frame = AVDISCARD_NONREF` 一行搞定——被丢的 NAL 在 [`h264dec.c:626`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626) 就 `continue`，根本不会提交给硬件 |
+| ③ 解码不输出 | ❌ | FFmpeg 没有暴露 VideoToolbox 的 `kVTDecodeFrame_DoNotOutputFrame` |
+| ④ 输出不渲染 | ✅ | 拿到帧后 `av_frame_unref()` 丢掉即可（输出只是传个引用，很便宜） |
+
+### 5.3 组合②：自建 VTDecompressionSession（iOS · 裸调）
+
+绕开了 FFmpeg 解码层，没有 `skip_frame`，但 VideoToolbox 自己的能力更全：
+
+| 手段 | 可用？ | 怎么做 |
+| --- | --- | --- |
+| **丢掉非参考帧** | ✅ | 走第 4 章的 **① 解码前丢包**：没有 `skip_frame` 可用，改由自己判定：用 3.3 的 `packet_droppable()`，非参考帧不喂 |
+| ③ 解码不输出 | ✅ | 追帧区间内的参考帧加 `kVTDecodeFrame_DoNotOutputFrame` |
+| ④ 输出不渲染 | ✅ | 拿到 `CVPixelBuffer` 后直接释放，不送显示层 |
+
+```c
+VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression;
+if (inPreroll)
+    flags |= kVTDecodeFrame_DoNotOutputFrame;  /* 解码入DPB，不回调输出 */
+VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
+```
+
+离线/追帧场景还可以把会话属性 `kVTDecompressionPropertyKey_RealTime`
+设为 `kCFBooleanFalse`，允许系统按吞吐优先调度。
+
+### 5.4 组合③：FFmpeg + MediaCodec（Android · 走 FFmpeg）
+
+`skip_frame` 设了也白设（wrapper 整包透传，不拆 NAL）。能用的手段：
+
+| 手段 | 可用？ | 怎么做 |
+| --- | --- | --- |
+| **丢掉非参考帧** | ✅ | 走第 4 章的 **① 解码前丢包**：`skip_frame` 设了也白设，改在 `avcodec_send_packet()` **之前**用 3.3 判定，非参考帧直接 `av_packet_unref()` |
+| ③ 解码不输出 | ❌ | wrapper 没有暴露 `BUFFER_FLAG_DECODE_ONLY` |
+| ④ 输出不渲染 | ✅ | `av_mediacodec_release_buffer(buffer, 0)`（[`libavcodec/mediacodec.h:86`](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86)） |
+
+想用上 ③ 和超实时解码，就得改走组合④（裸调 MediaCodec）。
+
+### 5.5 组合④：直接用 Android MediaCodec API（Android · 裸调）
+
+三层手段全都能用，是 Android 上最完整的方案：
+
+| 手段 | 可用？ | API | 版本 |
 | --- | --- | --- | --- |
-| ① 解码前丢包 | 非参考帧不 `queueInputBuffer`（喂给解码器；判定见 3.3） | 全版本 | 省解码+输出+渲染，首选 |
-| ③ 解码不输出 | `BUFFER_FLAG_DECODE_ONLY` | API 34+ | 参考帧追帧不出帧 |
-| ④ 输出不渲染 | `releaseOutputBuffer(index, false)` | 全版本 | 省 `updateTexImage`+GL |
+| **丢掉非参考帧** | ✅ | 走第 4 章的 **① 解码前丢包**：非参考帧不 `queueInputBuffer`（判定见 3.3） | 全版本 |
+| ③ 解码不输出 | ✅ | `BUFFER_FLAG_DECODE_ONLY` | API 34+ |
+| ④ 输出不渲染 | ✅ | `releaseOutputBuffer(index, false)` | 全版本 |
 
 ```java
 // ① 解码前丢包（追帧区间内）
@@ -685,24 +762,6 @@ format.setInteger(MediaFormat.KEY_PRIORITY, 1 /* non-realtime, best effort */);
 手机芯片的解码器会忽略该 key），但在主流平台上对追帧速度有实打实的
 提升；追上目标后可用 `setParameters` 恢复。
 
-### 5.3 iOS VideoToolbox：两条路
-
-**路线 A：FFmpeg hwaccel**——直接用 4.1 的 `skip_frame`，无须额外工作，
-被丢的非参考 NAL 不会到达 VT。
-
-**路线 B：自建 VTDecompressionSession**——解码前丢包（3.3）照常适用；
-追帧区间内的参考帧用 `kVTDecodeFrame_DoNotOutputFrame`：
-
-```c
-VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression;
-if (inPreroll)
-    flags |= kVTDecodeFrame_DoNotOutputFrame;  /* 解码入DPB，不回调输出 */
-VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
-```
-
-离线/追帧场景还可以把会话属性 `kVTDecompressionPropertyKey_RealTime`
-设为 `kCFBooleanFalse`，允许系统按吞吐优先调度。
-
 ---
 
 ## 6. 把它们串起来：精确 Seek 的完整流程
@@ -712,8 +771,8 @@ flowchart TD
     A["用户 Seek 到 T"] --> B["av_seek_frame(BACKWARD)<br/>定位 ≤T 的关键帧"]
     B --> C["清空解码器缓存（flush）<br/>avcodec_flush_buffers / codec.flush"]
     C --> D{"读包，pkt 在追帧区间?"}
-    D -->|"是，且非参考帧"| E["① 丢包不喂<br/>(软解: skip_frame=NONREF)"]
-    D -->|"是，参考帧"| F["喂入解码<br/>③ DECODE_ONLY / DoNotOutputFrame"]
+    D -->|"是，且非参考帧"| E["① 丢包不喂给解码器<br/>硬解: 应用层自己丢弃<br/>软解: skip_frame=NONREF"]
+    D -->|"是，参考帧"| F["喂给解码器<br/>③ 追帧时可解码但不输出帧<br/>DECODE_ONLY / DoNotOutputFrame<br/>仅 Android 14+ / iOS VideoToolbox，软解无"]
     D -->|"HEVC: CRA 后的 RASL"| E
     E --> D
     F --> G{"输出帧 pts+dur > T ?"}

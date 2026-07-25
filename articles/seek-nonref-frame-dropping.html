@@ -325,6 +325,23 @@ table.t td { color: #3d4a5c; }
 /* ---------- M5 ---------- */
 .m5-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 6px; }
 @media (max-width: 760px) { .m5-grid { grid-template-columns: 1fr; } }
+/* 第 5 章 → 第 4 章作用点的同页跳转：虚线下划线示意可点，落点行短暂高亮 */
+.apref { color: inherit; text-decoration: underline dotted var(--accent); text-underline-offset: 3px; }
+.apref:hover { color: var(--accent); text-decoration: underline solid var(--accent); }
+tr[id^="ap"] { scroll-margin-top: 90px; }          /* 避开 sticky 导航 */
+tr[id^="ap"]:target > td { background: #0e7fa81f; }
+tr[id^="ap"]:target > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+@keyframes apflash { from { background: #0e7fa838; } to { background: transparent; } }
+tr[id^="ap"].flash > td { animation: apflash 1.6s ease-out; }
+
+/* 分组标题：跨满整行，把四图分成 iOS / Android 两组 */
+.m5-group-title {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
+  font-size: 13.5px; font-weight: 700; color: var(--text);
+}
+.m5-group-title.gap { margin-top: 10px; }
+.m5-group-title::before { content: ''; width: 4px; height: 15px; border-radius: 2px; background: var(--accent); }
+.m5-group-title span { font-weight: 400; font-size: 12px; color: var(--muted); }
 .m5-col { position: relative; background: #f2f5fa; border: 1px solid var(--line); border-radius: 14px; padding: 16px 16px 18px; overflow: hidden; min-height: 330px; }
 .m5-col h4 { font-size: 13px; color: var(--text); text-align: center; margin-bottom: 4px; }
 .m5-col .sub4 { font-size: 11px; color: var(--muted); text-align: center; margin-bottom: 12px; font-family: var(--mono); }
@@ -338,21 +355,31 @@ table.t td { color: #3d4a5c; }
 .m5-box.sw-layer { border-color: #0f9d6e88; }
 .m5-box.hw-layer { border-color: #5b5bd688; }
 .m5-box.blackbox { border-color: #d63b4788; }
+.m5-box.app-layer { border-color: #e06a1388; }   /* 你的代码：应用层自己判定 */
 .m5-dot { position: absolute; z-index: 1; width: 14px; height: 14px; border-radius: 4px; pointer-events: none; }
 .m5-verdict { text-align: center; margin-top: 18px; font-size: 13px; font-weight: 700; }
 .m5-note { font-size: 11px; color: var(--muted); text-align: center; margin-top: 4px; min-height: 16px; }
 
 /* ---------- M6 stepper ---------- */
-.m6-flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 16px; }
-.m6-node {
-  font-size: 12px; padding: 7px 13px; border-radius: 99px; border: 1px solid var(--line);
-  background: var(--panel2); color: var(--muted); transition: all .2s; white-space: nowrap;
-}
-.m6-node.on { color: #0b5a78; border-color: var(--accent); background: #0e7fa815; box-shadow: 0 0 12px #0e7fa826; }
-.m6-node.warn-on { color: #7c5310; border-color: var(--warn); background: #b7791f15; }
-.m6-arrow { color: #9aa8bd; font-size: 12px; }
-.m6-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-@media (max-width: 860px) { .m6-grid { grid-template-columns: 1fr; } }
+/* 流程图：SVG 分支图，节点 class 与步进器 data-n 联动高亮 */
+/* 窄屏不整体缩放（否则文字缩到几 px 不可读），改为容器内横向滚动 + 保底宽度 */
+.m6-flow { margin: 6px 0 18px; overflow-x: auto; }
+.m6-flow svg { display: block; width: 100%; height: auto; min-width: 700px; }
+.m6-node rect { fill: #fff; stroke: var(--line); stroke-width: 1.5; transition: fill .2s, stroke .2s; }
+.m6-node.dec rect { fill: #fffaf0; stroke: #dfb684; }
+.m6-node text { fill: #3d4a5c; font-size: 12.5px; text-anchor: middle; font-family: var(--mono); }
+.m6-node text.sub { fill: var(--muted); font-size: 10px; font-family: var(--sans); }
+.m6-node.on rect { fill: #0e7fa815; stroke: var(--accent); stroke-width: 2.5; }
+.m6-node.on text { fill: #0b5a78; font-weight: 700; }
+.m6-node.warn-on rect { fill: #b7791f18; stroke: var(--warn); stroke-width: 2.5; }
+.m6-node.warn-on text { fill: #7c5310; font-weight: 700; }
+.m6-edge { fill: none; stroke: #b9c4d6; stroke-width: 1.6; }
+.m6-edge.loop { stroke: #cbd5e4; stroke-dasharray: 5 4; }
+.m6-lbl { fill: var(--muted); font-size: 10.5px; text-anchor: middle; font-family: var(--sans); }
+.m6-lbl.loop-lbl { fill: #9aa8bd; }
+.m6-stage { margin-bottom: 14px; }
+.m6-strip-row { display: flex; gap: 18px; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; }
+.m6-ctrl { margin-bottom: 12px; }
 #m6-code { background: #0d1119; border: 1px solid var(--line); border-radius: 12px; padding: 12px 0; }
 #m6-code .ln { display: block; padding: 1px 16px; white-space: pre; color: #93a1b8; }
 #m6-code .ln.on { background: #22d3ee1a; color: #fff; border-left: 3px solid var(--accent); padding-left: 13px; }
@@ -781,10 +808,10 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
     <div class="tscroll">
       <table class="t">
         <tr><th>作用点</th><th>省掉的成本</th><th>适用帧</th><th>依赖</th></tr>
-        <tr><td>① 解码前丢包</td><td>解码 + 输出 + 渲染，全省</td><td>仅非参考帧</td><td>无（任何解码器都可用）</td></tr>
-        <tr><td>② 解码器内跳过 <code>skip_frame</code></td><td>同上（省掉 slice 解码）</td><td>仅非参考帧（NONREF 级）</td><td>FFmpeg 软解 / hwaccel（<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>hevcdec.c:3795</code></a>）</td></tr>
-        <tr><td>③ 解码不输出</td><td>输出拷贝/回调 + 渲染</td><td><b>任何帧</b>（参考链由解码器维持）</td><td>API 34 <code>DECODE_ONLY</code> / VT <code>DoNotOutputFrame</code></td></tr>
-        <tr><td>④ 输出不渲染</td><td>仅渲染（纹理上传/GL）</td><td>任何帧</td><td>无</td></tr>
+        <tr id="ap1"><td>① 解码前丢包</td><td>解码 + 输出 + 渲染，全省</td><td>仅非参考帧</td><td>无（任何解码器都可用）</td></tr>
+        <tr id="ap2"><td>② 解码器内跳过 <code>skip_frame</code></td><td>同上（省掉 slice 解码）</td><td>仅非参考帧（NONREF 级）</td><td>FFmpeg 软解 / hwaccel（<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a>、<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>hevcdec.c:3795</code></a>）</td></tr>
+        <tr id="ap3"><td>③ 解码不输出</td><td>输出拷贝/回调 + 渲染</td><td><b>任何帧</b>（参考链由解码器维持）</td><td>API 34 <code>DECODE_ONLY</code> / VT <code>DoNotOutputFrame</code></td></tr>
+        <tr id="ap4"><td>④ 输出不渲染</td><td>仅渲染（纹理上传/GL）</td><td>任何帧</td><td>无</td></tr>
       </table>
     </div>
     <p style="margin-top:16px"><strong>①和②有什么不一样？</strong> 表格里这两行「省掉的成本」几乎写的一样，
@@ -806,61 +833,169 @@ av_parser_parse2(parser, avctx, &amp;out, &amp;out_size,
 
 <!-- ==================== CH 5 ==================== -->
 <section class="chapter" id="ch5">
-  <div class="chap-head"><span class="no">05</span><h2>硬解落地：为什么 iOS 顺手、Android 要自己动手</h2></div>
-  <p class="lead">先补一个背景：解码一帧包含两类活——<strong>「读懂码流」</strong>（解析各级头部、
-    搞清帧类型和参考关系，轻量的逻辑活）和<strong>「重建像素」</strong>（拿参考帧加差异数据把整幅画面
-    算出来，真正吃算力的活）。FFmpeg 接入硬解的两种模型，区别就在<strong>这两类活分别由谁干</strong>：</p>
+  <div class="chap-head"><span class="no">05</span><h2>硬解落地：四种组合，各自怎么丢帧</h2></div>
+  <p class="lead">用硬解要先定两件事：<strong>用哪个平台的硬解</strong>（Android <code>MediaCodec</code> /
+    iOS <code>VideoToolbox</code>），以及<strong>怎么调用它</strong>（让 FFmpeg 替你调，还是自己裸调平台 API）。
+    两两组合，就是下面四种用法：</p>
+  <div class="tscroll">
+    <table class="t">
+      <tr><th></th><th>通过 FFmpeg 调用</th><th>自己裸调平台 API</th></tr>
+      <tr><th>iOS VideoToolbox</th>
+        <td><b>① FFmpeg + VideoToolbox</b></td>
+        <td><b>② 自建 VTDecompressionSession</b></td></tr>
+      <tr><th>Android MediaCodec</th>
+        <td><b>③ FFmpeg + MediaCodec</b></td>
+        <td><b>④ 直接用 MediaCodec API</b></td></tr>
+    </table>
+  </div>
+  <div class="note"><b>结论先给</b>：第 4 章的 <a class="apref" href="#ap2"><b>② 解码器内跳过</b></a>（一行 <code>skip_frame</code> 就能丢帧）
+    <b>只在组合①有效</b>；组合②③④ 都得退回到 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>——自己读 NAL 头判定、把非参考帧丢掉。
+    特别注意 Android：<b>无论走不走 FFmpeg 都逃不掉自己丢</b>。好在判定只要读 NAL 头 1~2 字节，成本极低。</div>
+
+  <h3>为什么只有组合①能白嫖 skip_frame</h3>
+  <p>先补一个背景：解码一帧包含两类活——<strong>「读懂码流」</strong>（解析各级头部、搞清帧类型和
+    参考关系，轻量的逻辑活）和<strong>「重建像素」</strong>（拿参考帧加差异数据把整幅画面算出来，
+    真正吃算力的活）。<code>skip_frame</code> 是 <strong>FFmpeg 解码器的字段</strong>，它能不能生效，
+    取决于<strong>「读懂码流」这一步是谁干的</strong>：</p>
   <ul>
-    <li><strong>hwaccel 模型</strong>（硬件加速；如 iOS VideoToolbox、VAAPI、NVDEC）：FFmpeg 仍是「主厨」——
-      「读懂码流」照做，只把「重建像素」外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，
-      <code>skip_frame</code> 的丢帧判定就发生在这一步——被丢的 NAL <strong>根本不会提交给硬件</strong>，
-      ✅ 所以生效；</li>
-    <li><strong>wrapper 模型</strong>（包装；如 Android MediaCodec）：两类活<strong>全部在系统解码器
-      内部完成</strong>，FFmpeg 只是「传菜员」——整包压缩数据原样递进去、解码结果端出来，中间不拆开看，
-      连 NAL 都碰不到。<code>skip_frame</code> ❌ 自然无处生效——丢帧只能发生在<strong>解码之前</strong>
-      （作用点①）。</li>
+    <li><strong>组合②④（裸调平台 API）</strong>：压根不用 FFmpeg 解码，自然没有这个字段；</li>
+    <li><strong>组合①（hwaccel 模型）</strong>：FFmpeg 仍是「主厨」——「读懂码流」照做，只把
+      「重建像素」外包给硬件。每个 NAL 都要先经过 FFmpeg 的软件解析，<code>skip_frame</code> 的丢帧判定
+      就发生在这一步，被丢的 NAL <strong>根本不会提交给硬件</strong>，✅ 所以生效；</li>
+    <li><strong>组合③（wrapper 模型）</strong>：两类活<strong>全部在系统解码器内部完成</strong>，
+      FFmpeg 只是「传菜员」——整包压缩数据原样递进去、解码结果端出来，中间不拆开看，连 NAL 都碰不到，
+      <code>skip_frame</code> ❌ 自然无处生效。</li>
   </ul>
 
   <div class="module" id="m5">
     <div class="m-head">
-      <div class="m-title"><span class="dot"></span>M5 · hwaccel vs wrapper</div>
-      <div class="controls">
-        <label class="switch"><input type="checkbox" id="m5-toggle"><span class="tr"></span>设置 skip_frame = AVDISCARD_NONREF</label>
-      </div>
+      <div class="m-title"><span class="dot"></span>M5 · 四种硬解接入方式对比</div>
     </div>
     <div class="m5-grid">
-      <div class="m5-col" id="m5-left">
-        <h4>hwaccel 模型（iOS VideoToolbox）</h4>
-        <div class="sub4">-hwaccel videotoolbox</div>
-        <div class="m5-box">AVPacket<small>demux 输出的 AU</small></div>
+      <div class="m5-group-title">iOS · VideoToolbox 硬解 <span>两种接入方式</span></div>
+      <div class="m5-col" id="m5-c1">
+        <h4>① FFmpeg + VideoToolbox</h4>
+        <div class="sub4">hwaccel 模型 · -hwaccel videotoolbox</div>
+        <div class="m5-box">AVPacket<small>demux 输出的一帧数据</small></div>
         <div class="m5-box sw-layer">FFmpeg 软件层：拆 NAL、解析头<small><a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a> / <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/hevc/hevcdec.c#L3795" target="_blank" rel="noopener"><code>hevcdec.c:3795</code></a> 在这里 continue</small></div>
-        <div class="m5-box hw-layer">硬件解码<small>hwaccel start_frame / decode_slice</small></div>
-        <div class="m5-verdict" id="m5-verdict-l" style="color:var(--muted)">—</div>
-        <div class="m5-note" id="m5-note-l"></div>
+        <div class="m5-box hw-layer">VideoToolbox 硬件解码<small>hwaccel start_frame / decode_slice</small></div>
+        <div class="m5-verdict" id="m5-verdict-1" style="color:var(--muted)">—</div>
+        <div class="m5-note" id="m5-note-1"></div>
       </div>
-      <div class="m5-col" id="m5-right">
-        <h4>wrapper 模型（Android MediaCodec）</h4>
-        <div class="sub4">mediacodecdec.c</div>
-        <div class="m5-box">AVPacket<small>demux 输出的 AU</small></div>
+      <div class="m5-col" id="m5-c2">
+        <h4>② 自建 VTDecompressionSession</h4>
+        <div class="sub4">iOS 直接调用，不走 FFmpeg 解码</div>
+        <div class="m5-box">AVPacket / CMSampleBuffer<small>自己解封装拿到</small></div>
+        <div class="m5-box app-layer">你的代码：读 NAL 头判定<small>非参考帧就不喂（3.3 的判定）</small></div>
+        <div class="m5-box hw-layer">VideoToolbox 硬件解码<small>VTDecompressionSessionDecodeFrame</small></div>
+        <div class="m5-verdict" id="m5-verdict-2" style="color:var(--muted)">—</div>
+        <div class="m5-note" id="m5-note-2"></div>
+      </div>
+      <div class="m5-group-title gap">Android · MediaCodec 硬解 <span>两种接入方式</span></div>
+      <div class="m5-col" id="m5-c3">
+        <h4>③ FFmpeg + MediaCodec</h4>
+        <div class="sub4">wrapper 模型 · mediacodecdec.c</div>
+        <div class="m5-box">AVPacket<small>demux 输出的一帧数据</small></div>
         <div class="m5-box">wrapper：整包透传，不拆 NAL<small>源码中没有任何 skip_frame 处理</small></div>
-        <div class="m5-box blackbox">系统 MediaCodec 解码器<small>NAL 解析 + 解码都在内部</small></div>
-        <div class="m5-verdict" id="m5-verdict-r" style="color:var(--muted)">—</div>
-        <div class="m5-note" id="m5-note-r"></div>
+        <div class="m5-box blackbox">Android 系统 MediaCodec 解码器<small>NAL 解析 + 解码都在内部</small></div>
+        <div class="m5-verdict" id="m5-verdict-3" style="color:var(--muted)">—</div>
+        <div class="m5-note" id="m5-note-3"></div>
+      </div>
+      <div class="m5-col" id="m5-c4">
+        <h4>④ 直接用 MediaCodec API</h4>
+        <div class="sub4">Android 直接调用，不走 FFmpeg 解码</div>
+        <div class="m5-box">MediaExtractor sample<small>或 FFmpeg 解封装拿到</small></div>
+        <div class="m5-box app-layer">你的代码：读 NAL 头判定<small>非参考帧不 queueInputBuffer</small></div>
+        <div class="m5-box blackbox">Android 系统 MediaCodec 解码器<small>NAL 解析 + 解码都在内部</small></div>
+        <div class="m5-verdict" id="m5-verdict-4" style="color:var(--muted)">—</div>
+        <div class="m5-note" id="m5-note-4"></div>
       </div>
     </div>
 
-    <h3>平台手段速查</h3>
+    <div class="note">一句话：<b>只有「FFmpeg + VideoToolbox」这一种组合能白嫖 <code>skip_frame</code>，
+      其余三种都得自己在解码前判定并丢包</b>。特别注意 Android：<b>无论走不走 FFmpeg 都逃不掉自己丢</b>——
+      NAL 解析始终发生在系统解码器内部，你和 FFmpeg 都插不上手。好在判定只要读 NAL 头 1~2 字节，成本极低。</div>
+
+    <h3>四种组合各自怎么落地</h3>
     <div class="tabs">
-      <button id="m5-tab-android" class="on">Android MediaCodec</button>
-      <button id="m5-tab-ios">iOS VideoToolbox</button>
+      <button id="m5-tab-1" class="on">① FFmpeg + VideoToolbox</button>
+      <button id="m5-tab-2">② 自建 VTDecompressionSession</button>
+      <button id="m5-tab-3">③ FFmpeg + MediaCodec</button>
+      <button id="m5-tab-4">④ 直接用 MediaCodec API</button>
     </div>
-    <div class="tabpane on" id="m5-pane-android">
+
+    <div class="tabpane on" id="m5-pane-1">
+      <p style="font-size:13.5px"><b>四种组合里唯一能白嫖 <code>skip_frame</code> 的</b>，追帧就一行：</p>
+      <div class="codeblock">
+        <button class="copy-btn" data-copy="cp-skipframe">复制</button>
+<pre id="cp-skipframe"><code>avctx-&gt;skip_frame = AVDISCARD_NONREF;   <span class="cm">/* 追帧开始 */</span>
+<span class="cm">/* ... 追上目标后 ... */</span>
+avctx-&gt;skip_frame = AVDISCARD_DEFAULT; <span class="cm">/* 恢复 */</span></code></pre>
+      </div>
       <div class="tscroll">
         <table class="t">
-          <tr><th>层次</th><th>API</th><th>版本</th><th>效果</th></tr>
-          <tr><td>① 解码前丢包</td><td>非参考帧不 <code>queueInputBuffer</code>（喂给解码器）</td><td>全版本</td><td>省解码+输出+渲染，首选</td></tr>
-          <tr><td>③ 解码不输出</td><td><code>BUFFER_FLAG_DECODE_ONLY</code></td><td>API 34+</td><td>参考帧追帧不出帧（专为 seek preroll 设计）</td></tr>
-          <tr><td>④ 输出不渲染</td><td><code>releaseOutputBuffer(index, false)</code></td><td>全版本</td><td>省 updateTexImage + GL</td></tr>
+          <tr><th>手段</th><th>可用？</th><th>怎么做</th></tr>
+          <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
+            <td>走第 4 章的 <a class="apref" href="#ap2"><b>② 解码器内跳过</b></a>：<code>skip_frame = AVDISCARD_NONREF</code> 一行搞定——被丢的 NAL 在
+            <a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264dec.c#L626" target="_blank" rel="noopener"><code>h264dec.c:626</code></a>
+            就 <code>continue</code>，根本不会提交给硬件</td></tr>
+          <tr><td>③ 解码不输出</td><td style="color:var(--bad)">❌</td><td>FFmpeg 没有暴露 VideoToolbox 的 <code>kVTDecodeFrame_DoNotOutputFrame</code></td></tr>
+          <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td>拿到帧后 <code>av_frame_unref()</code>（输出只是传个引用，很便宜）</td></tr>
+        </table>
+      </div>
+      <div class="note">追帧期还可叠加 <code>skip_loop_filter = AVDISCARD_NONREF</code>（见 4.1）。</div>
+    </div>
+
+    <div class="tabpane" id="m5-pane-2">
+      <p style="font-size:13.5px">绕开了 FFmpeg 解码层，没有 <code>skip_frame</code>，但 VideoToolbox 自己的能力更全：</p>
+      <div class="tscroll">
+        <table class="t">
+          <tr><th>手段</th><th>可用？</th><th>怎么做</th></tr>
+          <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
+            <td>走第 4 章的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：没有 <code>skip_frame</code> 可用，改由自己判定——用
+            <code>packet_droppable()</code>（见第 3 章），非参考帧不喂</td></tr>
+          <tr><td>③ 解码不输出</td><td style="color:var(--ref)">✅</td><td>参考帧加 <code>kVTDecodeFrame_DoNotOutputFrame</code></td></tr>
+          <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td>拿到 <code>CVPixelBuffer</code> 后直接释放，不送显示层</td></tr>
+        </table>
+      </div>
+      <div class="codeblock">
+        <button class="copy-btn" data-copy="cp-ios">复制</button>
+<pre id="cp-ios"><code>VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression;
+<span class="kw">if</span> (inPreroll)
+    flags |= kVTDecodeFrame_DoNotOutputFrame;  <span class="cm">/* 解码入 DPB，不回调输出 */</span>
+VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
+
+<span class="cm">/* 离线/追帧场景：允许系统按吞吐优先调度 */</span>
+VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFalse);</code></pre>
+      </div>
+    </div>
+
+    <div class="tabpane" id="m5-pane-3">
+      <p style="font-size:13.5px"><code>skip_frame</code> 设了也白设（wrapper 整包透传，不拆 NAL）。能用的手段：</p>
+      <div class="tscroll">
+        <table class="t">
+          <tr><th>手段</th><th>可用？</th><th>怎么做</th></tr>
+          <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
+            <td>走第 4 章的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：<code>skip_frame</code> 设了也白设，改在
+            <code>avcodec_send_packet()</code> <b>之前</b>判定，非参考帧直接 <code>av_packet_unref()</code></td></tr>
+          <tr><td>③ 解码不输出</td><td style="color:var(--bad)">❌</td><td>wrapper 没有暴露 <code>BUFFER_FLAG_DECODE_ONLY</code></td></tr>
+          <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td><code>av_mediacodec_release_buffer(buffer, 0)</code>
+            （<a class="src" href="https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mediacodec.h#L86" target="_blank" rel="noopener"><code>mediacodec.h:86</code></a>）</td></tr>
+        </table>
+      </div>
+      <div class="note">想用上 ③ 和超实时解码，就得改走组合 ④（裸调 MediaCodec）。</div>
+    </div>
+
+    <div class="tabpane" id="m5-pane-4">
+      <p style="font-size:13.5px">三层手段全都能用，是 Android 上最完整的方案：</p>
+      <div class="tscroll">
+        <table class="t">
+          <tr><th>手段</th><th>可用？</th><th>API</th><th>版本</th></tr>
+          <tr><td><b>丢掉非参考帧</b></td><td style="color:var(--ref)">✅</td>
+            <td>走第 4 章的 <a class="apref" href="#ap1"><b>① 解码前丢包</b></a>：非参考帧不 <code>queueInputBuffer</code>（判定见第 3 章）</td>
+            <td>全版本</td></tr>
+          <tr><td>③ 解码不输出</td><td style="color:var(--ref)">✅</td><td><code>BUFFER_FLAG_DECODE_ONLY</code></td><td>API 34+</td></tr>
+          <tr><td>④ 输出不渲染</td><td style="color:var(--ref)">✅</td><td><code>releaseOutputBuffer(index, false)</code></td><td>全版本</td></tr>
         </table>
       </div>
       <div class="codeblock">
@@ -884,22 +1019,6 @@ format.setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE);
 format.setInteger(MediaFormat.KEY_PRIORITY, 1 <span class="cm">/* non-realtime */</span>);</code></pre>
       </div>
     </div>
-    <div class="tabpane" id="m5-pane-ios">
-      <p style="font-size:13.5px"><b>路线 A：FFmpeg hwaccel</b> —— 直接
-        <code>avctx-&gt;skip_frame = AVDISCARD_NONREF</code>，一行完成解码前丢帧，无须额外工作。<br>
-        <b>路线 B：自建 VTDecompressionSession</b> —— 解码前丢包照常适用；追帧区间内的参考帧用
-        <code>kVTDecodeFrame_DoNotOutputFrame</code>：</p>
-      <div class="codeblock">
-        <button class="copy-btn" data-copy="cp-ios">复制</button>
-<pre id="cp-ios"><code>VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression;
-<span class="kw">if</span> (inPreroll)
-    flags |= kVTDecodeFrame_DoNotOutputFrame;  <span class="cm">/* 解码入 DPB，不回调输出 */</span>
-VTDecompressionSessionDecodeFrame(session, sampleBuffer, flags, NULL, NULL);
-
-<span class="cm">/* 离线/追帧场景：允许系统按吞吐优先调度 */</span>
-VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFalse);</code></pre>
-      </div>
-    </div>
   </div>
 </section>
 
@@ -912,30 +1031,90 @@ VTSessionSetProperty(session, kVTDecompressionPropertyKey_RealTime, kCFBooleanFa
   <div class="module" id="m6">
     <div class="m-head">
       <div class="m-title"><span class="dot"></span>M6 · 精确 Seek 步进器</div>
-      <div class="controls">
-        <button class="btn" id="m6-prev">← 上一步</button>
-        <button class="btn primary" id="m6-next">下一步 →</button>
-        <button class="btn" id="m6-play">▶ 自动播放</button>
-      </div>
     </div>
     <div class="m6-flow" id="m6-flow">
-      <span class="m6-node" data-n="seek">av_seek_frame(BACKWARD)</span><span class="m6-arrow">→</span>
-      <span class="m6-node" data-n="flush">flush 清空缓存</span><span class="m6-arrow">→</span>
-      <span class="m6-node" data-n="read">读包判定</span><span class="m6-arrow">→</span>
-      <span class="m6-node" data-n="drop">①丢包(非参考/RASL)</span><span class="m6-arrow">/</span>
-      <span class="m6-node" data-n="feed">喂入(③只解不出)</span><span class="m6-arrow">→</span>
-      <span class="m6-node" data-n="out">输出判定</span><span class="m6-arrow">→</span>
-      <span class="m6-node" data-n="norender">④不渲染</span><span class="m6-arrow">→</span>
-      <span class="m6-node" data-n="done">恢复 + 首帧上屏</span>
+      <svg viewBox="0 0 960 470" role="img" aria-label="精确 Seek 流程图：两个判定分叉与两条回到读包的循环">
+        <defs>
+          <marker id="m6ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#b9c4d6"/>
+          </marker>
+        </defs>
+        <!-- 连线 -->
+        <path class="m6-edge" d="M270,41 H322" marker-end="url(#m6ar)"/>
+        <path class="m6-edge" d="M438,64 V88 H483 V106" marker-end="url(#m6ar)"/>
+        <path class="m6-edge" d="M483,156 V182 H155 V202" marker-end="url(#m6ar)"/>
+        <path class="m6-edge" d="M483,156 V182 H733 V202" marker-end="url(#m6ar)"/>
+        <path class="m6-edge" d="M733,270 V296" marker-end="url(#m6ar)"/>
+        <path class="m6-edge" d="M733,346 V372 H553 V390" marker-end="url(#m6ar)"/>
+        <path class="m6-edge" d="M733,346 V372 H820 V390" marker-end="url(#m6ar)"/>
+        <!-- 两条回环：丢包 / 不渲染 都回到「读包」继续下一个包 -->
+        <path class="m6-edge loop" d="M155,270 V448 H28 V139 H374" marker-end="url(#m6ar)"/>
+        <path class="m6-edge loop" d="M553,442 V458 H28"/>
+        <!-- 分支标签 -->
+        <text class="m6-lbl" x="155" y="176">非参考帧 / RASL → 可丢</text>
+        <text class="m6-lbl" x="733" y="176">参考帧 / 目标帧 → 要解</text>
+        <text class="m6-lbl" x="553" y="366">否：pts+dur ≤ T（没追上）</text>
+        <text class="m6-lbl" x="820" y="366">是：pts 覆盖 T（追上了）</text>
+        <text class="m6-lbl loop-lbl" x="44" y="300" transform="rotate(-90 44 300)">↻ 继续读下一个包</text>
+        <!-- 节点 -->
+        <g class="m6-node" data-n="seek">
+          <rect x="60" y="18" width="210" height="46" rx="10"/>
+          <text x="165" y="40">av_seek_frame(BACKWARD)</text>
+          <text class="sub" x="165" y="55">定位 ≤ T 的关键帧</text>
+        </g>
+        <g class="m6-node" data-n="flush">
+          <rect x="330" y="18" width="215" height="46" rx="10"/>
+          <text x="438" y="40">清空解码器缓存 flush</text>
+          <text class="sub" x="438" y="55">avcodec_flush_buffers</text>
+        </g>
+        <g class="m6-node dec" data-n="read" data-dec="1">
+          <rect x="380" y="112" width="205" height="44" rx="10"/>
+          <text x="483" y="139">读包：这个 AVPacket 要解吗？</text>
+        </g>
+        <g class="m6-node" data-n="drop">
+          <rect x="50" y="208" width="210" height="62" rx="10"/>
+          <text x="155" y="228">① 丢包不喂给解码器</text>
+          <text class="sub" x="155" y="243">硬解：应用层自己丢弃</text>
+          <text class="sub" x="155" y="257">软解：skip_frame=NONREF</text>
+        </g>
+        <g class="m6-node" data-n="feed">
+          <rect x="605" y="208" width="255" height="62" rx="10"/>
+          <text x="733" y="228">喂给解码器</text>
+          <text class="sub" x="733" y="243">③ 解码但不输出帧（DECODE_ONLY）</text>
+          <text class="sub" x="733" y="257">仅 Android 14+ / iOS VideoToolbox</text>
+        </g>
+        <g class="m6-node dec" data-n="out" data-dec="1">
+          <rect x="630" y="302" width="205" height="44" rx="10"/>
+          <text x="733" y="329">输出帧 pts+dur &gt; T ？</text>
+        </g>
+        <g class="m6-node" data-n="norender">
+          <rect x="455" y="396" width="195" height="46" rx="10"/>
+          <text x="553" y="418">④ 不渲染丢弃</text>
+          <text class="sub" x="553" y="433">release(false)</text>
+        </g>
+        <g class="m6-node" data-n="done">
+          <rect x="700" y="396" width="240" height="46" rx="10"/>
+          <text x="820" y="418">恢复 skip_frame=DEFAULT</text>
+          <text class="sub" x="820" y="433">首帧上屏，Seek 完成 🎉</text>
+        </g>
+      </svg>
     </div>
-    <div class="m6-grid">
-      <div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">mini-GOP（显示顺序）· Seek 目标 = <b style="color:var(--text)">B3</b></div>
-        <div id="m6-strip"></div>
-        <div id="m6-desc">点「下一步」开始步进。</div>
+    <div class="m6-stage">
+      <!-- 步进按钮与帧带同排：紧邻下方代码块，操作时不用来回滚动 -->
+      <div class="m6-strip-row">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">mini-GOP（显示顺序）· Seek 目标 = <b style="color:var(--text)">B3</b></div>
+          <div id="m6-strip"></div>
+        </div>
+        <div class="controls m6-ctrl">
+          <button class="btn" id="m6-prev">← 上一步</button>
+          <button class="btn primary" id="m6-next">下一步 →</button>
+          <button class="btn" id="m6-play">▶ 自动播放</button>
+        </div>
       </div>
-      <div id="m6-code"></div>
+      <div id="m6-desc">点「下一步」开始步进。</div>
     </div>
+    <div id="m6-code"></div>
   </div>
 </section>
 
@@ -1109,6 +1288,15 @@ function visLoop(el, tick) {
   $$('section.chapter').forEach(s => io.observe(s));
 
   $$('.flip').forEach(f => f.addEventListener('click', () => f.classList.toggle('flipped')));
+
+  /* 第5章→第4章作用点跳转：落点行闪一下，免得读者不知道该看哪一行 */
+  $$('.apref').forEach(a => a.addEventListener('click', () => {
+    const el = $(a.getAttribute('href'));
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth;            /* 强制重排，重复点击也能重播动画 */
+    el.classList.add('flash');
+  }));
 
   $$('.copy-btn').forEach(btn => btn.addEventListener('click', async () => {
     try {
@@ -1382,30 +1570,35 @@ function visLoop(el, tick) {
    ================================================================ */
 (() => {
   const mod = $('#m5');
-  const cols = [
-    { el: $('#m5-left'),  hwaccel: true,  verdict: $('#m5-verdict-l'), note: $('#m5-note-l') },
-    { el: $('#m5-right'), hwaccel: false, verdict: $('#m5-verdict-r'), note: $('#m5-note-r') },
-  ];
-  const toggle = $('#m5-toggle');
+  /* 四种组合：mode 决定开关打开后的判定与动画
+     hwaccel = FFmpeg 拆 NAL，skip_frame 生效；wrapper = FFmpeg 透传，开关无效；
+     self    = 不走 FFmpeg 解码层，压根没有这个开关 */
+  const cols = [1, 2, 3, 4].map((i, k) => ({
+    el: $('#m5-c' + i), verdict: $('#m5-verdict-' + i), note: $('#m5-note-' + i),
+    mode: ['hwaccel', 'self', 'wrapper', 'self'][k],
+  }));
   const seq = [true, false, true, false, false, true]; /* ref / nonref 花纹 */
   let seqI = 0, spawnT = 0;
   const dots = [];
+  /* 恒定展示「已设置 skip_frame = AVDISCARD_NONREF」时四种组合各自的结果 */
   function verdicts() {
-    const on = toggle.checked;
     for (const c of cols) {
-      if (!on) { c.verdict.textContent = '所有 NAL 全部送入解码'; c.verdict.style.color = '#5d6b80'; c.note.textContent = ''; }
-      else if (c.hwaccel) {
+      if (c.mode === 'hwaccel') {
         c.verdict.textContent = '✅ skip_frame 生效';
         c.verdict.style.color = CL.ref;
         c.note.textContent = '非参考 NAL 在软件层被拦下，硬件只收参考帧';
-      } else {
+      } else if (c.mode === 'wrapper') {
         c.verdict.textContent = '❌ skip_frame 无效';
         c.verdict.style.color = CL.bad;
         c.note.textContent = 'NAL 原样进系统解码器 → 只能在解码前自己丢包';
+      } else {
+        c.verdict.textContent = '⚙️ 根本没有 skip_frame';
+        c.verdict.style.color = CL.warn;
+        c.note.textContent = '不走 FFmpeg 解码层 → 必须自己读 NAL 头判定丢包';
       }
     }
   }
-  toggle.addEventListener('change', verdicts); verdicts();
+  verdicts();
 
   visLoop(mod, (dt) => {
     spawnT -= dt;
@@ -1429,7 +1622,7 @@ function visLoop(el, tick) {
     for (let i = dots.length - 1; i >= 0; i--) {
       const d = dots[i];
       d.y += dt * 92;
-      if (toggle.checked && d.col.hwaccel && !d.isRef && !d.deflected && d.y >= d.gateY) {
+      if (d.col.mode === 'hwaccel' && !d.isRef && !d.deflected && d.y >= d.gateY) {
         d.deflected = true; d.vx = 130; /* 软件层拦截：弹飞 */
       }
       if (d.deflected) { d.x += d.vx * dt; d.y -= dt * 40; d.alpha -= dt * 1.8; }
@@ -1440,11 +1633,11 @@ function visLoop(el, tick) {
     }
   });
 
-  /* Android / iOS 选项卡 */
-  const t = { android: [$('#m5-tab-android'), $('#m5-pane-android')], ios: [$('#m5-tab-ios'), $('#m5-pane-ios')] };
-  for (const k in t) t[k][0].addEventListener('click', () => {
-    for (const j in t) { t[j][0].classList.toggle('on', j === k); t[j][1].classList.toggle('on', j === k); }
-  });
+  /* 四种组合的选项卡 */
+  const tabs = [1, 2, 3, 4].map(i => [$('#m5-tab-' + i), $('#m5-pane-' + i)]);
+  tabs.forEach(([btn], k) => btn.addEventListener('click', () => {
+    tabs.forEach(([b, p], j) => { b.classList.toggle('on', j === k); p.classList.toggle('on', j === k); });
+  }));
 })();
 
 /* ================================================================
@@ -1452,20 +1645,21 @@ function visLoop(el, tick) {
    ================================================================ */
 (() => {
   const CODE = [
-    'av_seek_frame(fmt, v, target, AVSEEK_FLAG_BACKWARD);',
-    'avcodec_flush_buffers(avctx);',
-    'avctx->skip_frame = AVDISCARD_NONREF;      // ①/②',
-    'while (read_packet(&pkt)) {',
-    '    if (preroll && packet_droppable(pkt))  // ① 丢包',
-    '        continue;',
-    '    decode(pkt, preroll ? DECODE_ONLY : 0);// ③',
-    '    while (receive_frame(&f)) {',
-    '        if (f.pts + f.dur <= target) {',
-    '            discard(f);                    // ④ 不渲染',
+    /* 行数与 STEPS 里的 l（高亮行号）一一对应，增删行需同步改 STEPS */
+    'av_seek_frame(fmt, v, target, AVSEEK_FLAG_BACKWARD);  // 回退到 ≤T 的最近关键帧',
+    'avcodec_flush_buffers(avctx);            // 清空 DPB，从关键帧重建参考链',
+    'avctx->skip_frame = AVDISCARD_NONREF;    // ①/② 追帧期间丢掉非参考帧',
+    'while (read_packet(&pkt)) {              // 按解码顺序逐个读出 AVPacket',
+    '    if (preroll && packet_droppable(pkt))    // ① 只读 NAL 头即可判定',
+    '        continue;                            //    整包丢弃，不喂给解码器',
+    '    decode(pkt, preroll ? DECODE_ONLY : 0);  // ③ 解码但不输出帧：仅 Android 14+ / iOS VideoToolbox',
+    '    while (receive_frame(&f)) {              //    取出解码好的帧',
+    '        if (f.pts + f.dur <= target) {       //    这帧还在目标之前？',
+    '            discard(f);                      // ④ 不渲染，省纹理上传/GL',
     '            continue;',
     '        }',
-    '        avctx->skip_frame = AVDISCARD_DEFAULT;',
-    '        render(f);                         // 首帧上屏 ✓',
+    '        avctx->skip_frame = AVDISCARD_DEFAULT;   // 追上了，恢复正常解码',
+    '        render(f);                               // 首帧上屏，Seek 完成 ✓',
     '    }',
     '}',
   ];
@@ -1480,7 +1674,7 @@ function visLoop(el, tick) {
     { n: 'seek', l: 0, d: '<b>① 定位</b>：av_seek_frame(BACKWARD) 按容器里的关键帧索引表（MP4 的 stss/sidx，记录哪些帧是关键帧）回退到 ≤ 目标 B3 的关键帧 <b>I0</b>。' },
     { n: 'flush', l: 1, d: '<b>② flush</b>：清空解码器内部状态与 DPB，准备从 I0 重新建立参考链。' },
     { n: 'read', l: 2, d: '<b>③ 追帧开始</b>：设 skip_frame=NONREF（软解/hwaccel 路径下②生效；Android MediaCodec 则靠下面的①）。以下按<b>解码顺序</b>读包：I0 → P4 → B2 → B1 → B3。' },
-    { n: 'feed', l: 6, d: '<b>I0</b>（IDR，参考）：喂入解码，preroll 内可带 DECODE_ONLY——解码入 DPB 但不出帧。', mark: [['I0', 'decoded', '解码✓']] },
+    { n: 'feed', l: 6, d: '<b>I0</b>（IDR，参考）：喂给解码器，解码结果进 DPB 当后面帧的底子。<b>硬解</b>可加「③ 解码不输出」省掉输出开销（Android 14+ <code>DECODE_ONLY</code> / iOS <code>DoNotOutputFrame</code>）；<b>FFmpeg 软解没有这个开关</b>，帧照常输出，靠 ④ 不渲染丢掉即可（软解输出只是传个引用，本来就很便宜）。', mark: [['I0', 'decoded', '解码✓']] },
     { n: 'feed', l: 6, d: '<b>P4</b>（参考 P，第 0 层锚点）：显示顺序在目标 B3 <b>之后</b>，但 B2/B3 都依赖它——解码顺序在前，必须先解。', mark: [['P4', 'decoded', '解码✓']] },
     { n: 'feed', l: 6, d: '<b>B2</b>（<b>参考 B</b>，金字塔第 1 层·中间参考层）：不能丢！B1/B3 参考它。「丢 B 帧」策略在这里翻车。', mark: [['B2', 'decoded', '解码✓']] },
     { n: 'drop', l: 4, d: '<b>B1</b>（非参考，pts&lt;target）：<b>① 整包丢弃</b>，解码器根本不知道它存在过。H.264 看 ref_idc==0，H.265 看 _N。', mark: [['B1', 'dropped', '丢包①']] },
@@ -1494,7 +1688,8 @@ function visLoop(el, tick) {
   function apply(i) {
     cur = Math.max(-1, Math.min(STEPS.length - 1, i));
     $$('.m6-fr').forEach(f => { f.className = 'm6-fr'; $('.st', f).textContent = '待读'; });
-    $$('.m6-node').forEach(n => n.className = 'm6-node');
+    /* SVG <g> 的 className 只读，须用 setAttribute；判定节点的 dec 样式要保留 */
+    $$('.m6-node').forEach(n => n.setAttribute('class', 'm6-node' + (n.dataset.dec ? ' dec' : '')));
     $$('#m6-code .ln').forEach(l => l.classList.remove('on'));
     for (let k = 0; k <= cur; k++)
       (STEPS[k].mark || []).forEach(([id, cls, st]) => {
