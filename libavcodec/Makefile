@@ -108,7 +108,6 @@ OBJS-$(CONFIG_EVCPARSE)                += evc_parse.o evc_ps.o
 OBJS-$(CONFIG_FAANDCT)                 += faandct.o
 OBJS-$(CONFIG_FAANIDCT)                += faanidct.o
 OBJS-$(CONFIG_FDCTDSP)                 += fdctdsp.o jfdctfst.o jfdctint.o
-OBJS-$(CONFIG_FMTCONVERT)              += fmtconvert.o
 OBJS-$(CONFIG_GOLOMB)                  += golomb.o
 OBJS-$(CONFIG_H263DSP)                 += h263dsp.o
 OBJS-$(CONFIG_H264CHROMA)              += h264chroma.o
@@ -348,6 +347,7 @@ OBJS-$(CONFIG_DPX_DECODER)             += dpx.o
 OBJS-$(CONFIG_DPX_ENCODER)             += dpxenc.o
 OBJS-$(CONFIG_DSD_LSBF_DECODER)        += dsddec.o dsd.o
 OBJS-$(CONFIG_DSD_MSBF_DECODER)        += dsddec.o dsd.o
+OBJS-$(CONFIG_DSD_MSBF_ENCODER)        += dsdenc.o
 OBJS-$(CONFIG_DSD_LSBF_PLANAR_DECODER) += dsddec.o dsd.o
 OBJS-$(CONFIG_DSD_MSBF_PLANAR_DECODER) += dsddec.o dsd.o
 OBJS-$(CONFIG_DSICINAUDIO_DECODER)     += dsicinaudio.o
@@ -897,6 +897,7 @@ OBJS-$(CONFIG_PCM_BLURAY_ENCODER)         += pcm-blurayenc.o
 OBJS-$(CONFIG_PCM_BLURAY_DECODER)         += pcm-bluray.o
 OBJS-$(CONFIG_PCM_DVD_DECODER)            += pcm-dvd.o
 OBJS-$(CONFIG_PCM_DVD_ENCODER)            += pcm-dvdenc.o
+OBJS-$(CONFIG_PCM_DVDA_DECODER)           += pcm-dvda.o
 OBJS-$(CONFIG_PCM_F16LE_DECODER)          += pcm.o
 OBJS-$(CONFIG_PCM_F24LE_DECODER)          += pcm.o
 OBJS-$(CONFIG_PCM_F32BE_DECODER)          += pcm.o
@@ -1181,6 +1182,8 @@ OBJS-$(CONFIG_LIBAOM_AV1_DECODER)         += libaomdec.o libaom.o
 OBJS-$(CONFIG_LIBAOM_AV1_ENCODER)         += libaomenc.o libaom.o
 OBJS-$(CONFIG_LIBARIBB24_DECODER)         += libaribb24.o ass.o
 OBJS-$(CONFIG_LIBARIBCAPTION_DECODER)     += libaribcaption.o ass.o
+OBJS-$(CONFIG_LIBASTCENC_ENCODER)         += libastcenc.o
+OBJS-$(CONFIG_LIBASTCENC_DECODER)         += libastcdec.o
 OBJS-$(CONFIG_LIBCODEC2_DECODER)          += libcodec2.o
 OBJS-$(CONFIG_LIBCODEC2_ENCODER)          += libcodec2.o
 OBJS-$(CONFIG_LIBDAV1D_DECODER)           += libdav1d.o av1_parse.o
@@ -1377,11 +1380,11 @@ TESTPROGS = avcodec                                                     \
             bitstream_be                                                \
             bitstream_le                                                \
             codec_desc                                                  \
-            encinfo                                                     \
             htmlsubtitles                                               \
             jpeg2000dwt                                                 \
             mathops                                                    \
 
+TESTPROGS-$(CONFIG_AC3DSP)                += ac3
 TESTPROGS-$(CONFIG_APV_DECODER)           += apv
 TESTPROGS-$(CONFIG_AV1_VAAPI_ENCODER)     += av1_levels
 TESTPROGS-$(CONFIG_CABAC)                 += cabac
@@ -1390,6 +1393,7 @@ TESTPROGS-$(CONFIG_GOLOMB)                += golomb
 TESTPROGS-$(CONFIG_IDCTDSP)               += dct
 TESTPROGS-$(CONFIG_DXV_ENCODER)           += hashtable
 TESTPROGS-$(CONFIG_MJPEG_ENCODER)         += mjpegenc_huffman
+TESTPROGS-$(CONFIG_MPEGAUDIOHEADER)       += mpegaudiodecheader
 TESTPROGS-$(CONFIG_MPEGVIDEO)             += mpeg12framerate
 TESTPROGS-$(CONFIG_H264_METADATA_BSF)     += h264_levels
 TESTPROGS-$(CONFIG_HEVC_METADATA_BSF)     += h265_levels

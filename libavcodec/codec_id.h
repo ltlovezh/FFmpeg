@@ -324,6 +324,7 @@ enum AVCodecID {
     AV_CODEC_ID_PRORES_RAW,
     AV_CODEC_ID_JPEGXS,
     AV_CODEC_ID_WEBP_ANIM,
+    AV_CODEC_ID_ASTC,
 
     /* various PCM "codecs" */
     AV_CODEC_ID_FIRST_AUDIO = 0x10000,     ///< A dummy id pointing at the start of audio codecs
@@ -364,6 +365,7 @@ enum AVCodecID {
     AV_CODEC_ID_PCM_F24LE,
     AV_CODEC_ID_PCM_VIDC,
     AV_CODEC_ID_PCM_SGA,
+    AV_CODEC_ID_PCM_DVDA,
 
     /* various ADPCM codecs */
     AV_CODEC_ID_ADPCM_IMA_QT = 0x11000,
