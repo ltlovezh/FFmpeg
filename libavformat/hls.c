@@ -264,6 +264,7 @@ typedef struct HLSContext {
     int m3u8_hold_counters;
     int live_start_index;
     int prefer_x_start;
+    int master_time_offset_flag; ///< EXT-X-START was set by the Master Playlist
     int first_packet;
     int64_t first_timestamp;
     struct playlist *first_timestamp_pls;
@@ -979,6 +980,9 @@ static int parse_playlist(HLSContext *c, const char *url,
     int prev_n_segments = 0;
     int64_t prev_start_seq_no = -1;
     int64_t load_start = av_gettime_relative();
+    int64_t start_time_offset = 0;
+    int time_offset_flag = 0;
+    int finished = 0;
 
     if (is_http && !in && c->http_persistent && c->playlist_pb) {
         in = c->playlist_pb;
@@ -1139,15 +1143,11 @@ static int parse_playlist(HLSContext *c, const char *url,
 
         } else if (av_strstart(line, "#EXT-X-START:", &ptr)) {
             const char *time_offset_value = NULL;
-            ret = ensure_playlist(c, &pls, url);
-            if (ret < 0) {
-                goto fail;
-            }
             if (av_strstart(ptr, "TIME-OFFSET=", &time_offset_value)) {
                 double offset = strtod(time_offset_value, NULL) * AV_TIME_BASE;
                 if (offset >= -0x1p63 && offset < 0x1p63) {
-                    pls->start_time_offset = offset;
-                    pls->time_offset_flag = 1;
+                    start_time_offset = offset;
+                    time_offset_flag  = 1;
                 } else {
                     av_log(c->ctx, AV_LOG_WARNING, "TIME-OFFSET value is"
                                                     "invalid, it will be ignored");
@@ -1158,8 +1158,7 @@ static int parse_playlist(HLSContext *c, const char *url,
                 continue;
             }
         } else if (av_strstart(line, "#EXT-X-ENDLIST", &ptr)) {
-            if (pls)
-                pls->finished = 1;
+            finished = 1;
         } else if (av_strstart(line, "#EXTINF:", &ptr)) {
             double d = atof(ptr) * AV_TIME_BASE;
             if (d < 0 || d > INT64_MAX || isnan(d)) {
@@ -1287,6 +1286,27 @@ static int parse_playlist(HLSContext *c, const char *url,
         } else if (pls->start_seq_no < prev_start_seq_no) {
             av_log(c->ctx, AV_LOG_WARNING, "Media sequence changed unexpectedly: %"PRId64" -> %"PRId64"\n",
                    prev_start_seq_no, pls->start_seq_no);
+        }
+    }
+
+    /* Media Playlist tags may precede the first tag that allocates the
+     * playlist. */
+    if (pls && finished)
+        pls->finished = 1;
+
+    /* EXT-X-START is valid in both playlist types. A value from the Master
+     * Playlist applies to all its Media Playlists, which then ignore their
+     * own (RFC 8216 4.3.5). */
+    if (time_offset_flag && !c->master_time_offset_flag) {
+        if (pls) {
+            pls->start_time_offset = start_time_offset;
+            pls->time_offset_flag  = 1;
+        } else {
+            c->master_time_offset_flag = 1;
+            for (int i = 0; i < c->n_playlists; i++) {
+                c->playlists[i]->start_time_offset = start_time_offset;
+                c->playlists[i]->time_offset_flag  = 1;
+            }
         }
     }
 
@@ -2803,8 +2823,8 @@ static int recheck_discard_flags(AVFormatContext *s, int first)
             pls->pb.pub.eof_reached = 0;
             if (c->cur_timestamp != AV_NOPTS_VALUE) {
                 /* catch up */
-                pls->seek_timestamp = c->cur_timestamp +
-                    (pls->ts_offset != AV_NOPTS_VALUE ? pls->ts_offset : 0);
+                pls->seek_timestamp = av_sat_add64(c->cur_timestamp,
+                    pls->ts_offset != AV_NOPTS_VALUE ? pls->ts_offset : 0);
                 pls->seek_flags = AVSEEK_FLAG_ANY;
                 pls->seek_stream_index = -1;
             }
@@ -2827,12 +2847,12 @@ static int recheck_discard_flags(AVFormatContext *s, int first)
 static void fill_timing_for_id3_timestamped_stream(struct playlist *pls)
 {
     if (pls->id3_offset >= 0) {
-        pls->pkt->dts = pls->id3_mpegts_timestamp +
-                                 av_rescale_q(pls->id3_offset,
-                                              pls->ctx->streams[pls->pkt->stream_index]->time_base,
-                                              MPEG_TIME_BASE_Q);
+        pls->pkt->dts = av_sat_add64(pls->id3_mpegts_timestamp,
+                                     av_rescale_q(pls->id3_offset,
+                                                  pls->ctx->streams[pls->pkt->stream_index]->time_base,
+                                                  MPEG_TIME_BASE_Q));
         if (pls->pkt->duration)
-            pls->id3_offset += pls->pkt->duration;
+            pls->id3_offset = av_sat_add64(pls->id3_offset, pls->pkt->duration);
         else
             pls->id3_offset = -1;
     } else {
@@ -2935,7 +2955,7 @@ static int hls_read_packet(AVFormatContext *s, AVPacket *pkt)
                                               get_timebase(pls), AV_TIME_BASE_Q);
 
                     for (int64_t k = 0; k < seg_idx && k < pls->n_segments; k++)
-                        ts -= pls->segments[k]->duration;
+                        ts = av_sat_sub64(ts, pls->segments[k]->duration);
 
                     if (c->first_timestamp == AV_NOPTS_VALUE) {
                         c->first_timestamp = ts;
@@ -2946,19 +2966,19 @@ static int hls_read_packet(AVFormatContext *s, AVPacket *pkt)
                          * order, but another stream in the same segment may
                          * start earlier. Lower the estimate while packets of
                          * that segment are still arriving. */
-                        int64_t delta = c->first_timestamp - ts;
+                        int64_t delta = av_sat_sub64(c->first_timestamp, ts);
 
                         if (delta > 0 && delta <= pls->target_duration) {
                             c->first_timestamp = ts;
                             for (int k = 0; k < c->n_playlists; k++)
                                 if (c->playlists[k]->ts_offset != AV_NOPTS_VALUE)
-                                    c->playlists[k]->ts_offset += delta;
+                                    c->playlists[k]->ts_offset = av_sat_add64(c->playlists[k]->ts_offset, delta);
                             adjusted = 1;
                         }
                     }
 
                     if (pls->ts_offset == AV_NOPTS_VALUE)
-                        pls->ts_offset = ts - c->first_timestamp;
+                        pls->ts_offset = av_sat_sub64(ts, c->first_timestamp);
 
                     if (adjusted) {
                         for (unsigned k = 0; k < s->nb_streams; k++)
@@ -3224,7 +3244,7 @@ static int hls_read_seek(AVFormatContext *s, int stream_index,
          * have different DTS baselines, so translate the threshold onto this
          * playlist's own baseline using its captured offset. */
         if (pls->ts_offset != AV_NOPTS_VALUE)
-            pls->seek_timestamp = seek_timestamp + pls->ts_offset;
+            pls->seek_timestamp = av_sat_add64(seek_timestamp, pls->ts_offset);
         else
             pls->seek_timestamp = seek_timestamp;
         pls->seek_flags = flags;
@@ -3235,7 +3255,7 @@ static int hls_read_seek(AVFormatContext *s, int stream_index,
              * to not discard the keyframe and land one segment late. */
             int64_t idx = seq_no - pls->start_seq_no;
             if (idx >= 0 && idx < pls->n_segments)
-                pls->seek_timestamp -= pls->segments[idx]->duration;
+                pls->seek_timestamp = av_sat_sub64(pls->seek_timestamp, pls->segments[idx]->duration);
         }
 
         if (pls != seek_pls) {

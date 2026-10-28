@@ -27,6 +27,7 @@
 #include "libavutil/common.h"
 #include "libavutil/eval.h"
 #include "libavutil/frame.h"
+#include "libavutil/framepool.h"
 #include "libavutil/hwcontext.h"
 #include "libavutil/internal.h"
 #include "libavutil/mem.h"
@@ -41,7 +42,6 @@
 #include "filters.h"
 #include "formats.h"
 #include "framequeue.h"
-#include "framepool.h"
 #include "video.h"
 
 static void tlog_ref(void *ctx, AVFrame *ref, int end)
@@ -1596,6 +1596,8 @@ int ff_inlink_make_frame_writable(AVFilterLink *link, AVFrame **rframe)
 
     switch (link->type) {
     case AVMEDIA_TYPE_VIDEO:
+        if (frame->format != link->format)
+            return av_frame_make_writable(frame);
         out = ff_get_video_buffer(link, frame->width, frame->height);
         break;
     case AVMEDIA_TYPE_AUDIO:

@@ -768,6 +768,8 @@ static int set_sps(HEVCContext *s, HEVCLayerContext *l, const HEVCSPS *sps)
     if (!sps)
         return 0;
 
+    av_refstruct_unref(&s->vps);
+
     ret = pic_arrays_init(l, sps);
     if (ret < 0)
         goto fail;
@@ -3449,6 +3451,9 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
                        "Base/non-base layer SPS have unsupported parameter combination\n");
                 return AVERROR(ENOSYS);
             }
+        } else {
+            for (int i = 1; i < FF_ARRAY_ELEMS(s->layers); i++)
+                set_sps(s, &s->layers[i], NULL);
         }
 
         ff_hevc_clear_refs(l);
@@ -3679,7 +3684,7 @@ static int hevc_frame_end(HEVCContext *s, HEVCLayerContext *l)
 {
     HEVCFrame *out = l->cur_frame;
     const AVFilmGrainParams *fgp;
-    av_unused int ret;
+    int ret;
 
     if (out->needs_fg) {
         av_assert0(out->frame_grain->buf[0]);
@@ -3695,7 +3700,10 @@ static int hevc_frame_end(HEVCContext *s, HEVCLayerContext *l)
             ret = ff_aom_apply_film_grain(out->frame_grain, out->f, fgp);
             break;
         }
-        av_assert1(ret >= 0);
+        if (ret < 0) {
+            out->needs_fg = 0;
+            return ret;
+        }
     }
 
     if (s->avctx->hwaccel) {

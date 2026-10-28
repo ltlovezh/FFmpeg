@@ -315,6 +315,7 @@ typedef struct HEIFItem {
     int vflip;
     int type;
     int is_gainmap;
+    int is_alpha;
     int is_idat_relative;
     AVExifMetadata ifd;
     uint8_t *icc_profile;
@@ -368,6 +369,8 @@ typedef struct MOVContext {
     int has_looked_for_mfra;
     int use_tfdt;
     MOVFragmentIndex frag_index;
+    uint8_t *pssh_side_data;
+    unsigned int pssh_side_data_allocated;
     int atom_depth;
     unsigned int aax_mode;  ///< 'aax' file has been detected
     uint8_t file_key[20];

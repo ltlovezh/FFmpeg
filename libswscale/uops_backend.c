@@ -106,9 +106,9 @@ static const SwsUOpTable uop_table = {
     },
 };
 
-static void process(const SwsOpExec *exec, const void *priv,
-                    const int bx_start, const int y_start,
-                    int bx_end, int y_end)
+static void process_c(const SwsOpExec *exec, const void *priv,
+                      const int bx_start, const int y_start,
+                      int bx_end, int y_end)
 {
     const SwsOpChain *chain = priv;
     const SwsOpImpl *impl = chain->impl;
@@ -159,7 +159,7 @@ static int compile_uops_c(SwsContext *ctx, const SwsUOpList *uops, SwsCompiledOp
         .cpu_flags   = chain->cpu_flags,
         .priv        = chain,
         .free        = ff_sws_op_chain_free_cb,
-        .func        = process,
+        .func        = process_c,
     };
 
     memcpy(out->over_read,  chain->over_read,  sizeof(out->over_read));
@@ -179,7 +179,7 @@ fail:
     return ret;
 }
 
-static int compile_c(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
+static int compile_ops_c(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
 {
     SwsUOpList *uops = ff_sws_uop_list_alloc();
     if (!uops)
@@ -187,7 +187,8 @@ static int compile_c(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
 
     const SwsUOpFlags flags = SWS_UOP_FLAG_EXPAND_BIT
                             | SWS_UOP_FLAG_READ_PALETTE
-                            | SWS_UOP_FLAG_ADD;
+                            | SWS_UOP_FLAG_ADD
+                            | SWS_UOP_FLAG_PUNNING;
     int ret = ff_sws_ops_translate(ctx, ops, flags, uops);
     if (ret < 0)
         goto fail;
@@ -202,7 +203,7 @@ fail:
 const SwsOpBackend backend_c = {
     .name           = "c",
     .flags          = SWS_BACKEND_C,
-    .compile        = compile_c,
+    .compile        = compile_ops_c,
     .compile_uops   = compile_uops_c,
     .hw_format      = AV_PIX_FMT_NONE,
 };

@@ -5520,7 +5520,8 @@ static int mov_update_iamf_streams(MOVContext *c, const AVStream *st)
         const AVStreamGroup *stg = NULL;
 
         for (int j = 0; j < c->fc->nb_stream_groups; j++)
-            if (c->fc->stream_groups[j]->id == iamf->audio_elements[i]->audio_element_id)
+            if (c->fc->stream_groups[j]->type == AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT &&
+                c->fc->stream_groups[j]->id   == iamf->audio_elements[i]->audio_element_id)
                 stg = c->fc->stream_groups[j];
         av_assert0(stg);
 
@@ -6315,7 +6316,7 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     frag_stream_info = get_current_frag_stream_info(&c->frag_index);
     if (frag_stream_info) {
         if (frag_stream_info->next_trun_dts != AV_NOPTS_VALUE) {
-            dts = frag_stream_info->next_trun_dts - sc->time_offset;
+            dts = av_sat_sub64(frag_stream_info->next_trun_dts, sc->time_offset);
         } else if (frag_stream_info->first_tfra_pts != AV_NOPTS_VALUE &&
             c->use_mfra_for == FF_MOV_FLAG_MFRA_PTS) {
             pts = frag_stream_info->first_tfra_pts;
@@ -6340,7 +6341,7 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             }
 
             if (has_tfdt && c->use_tfdt || fallback_tfdt) {
-                dts = frag_stream_info->tfdt_dts - sc->time_offset;
+                dts = av_sat_sub64(frag_stream_info->tfdt_dts, sc->time_offset);
                 av_log(c->fc, AV_LOG_DEBUG, "found tfdt time %"PRId64
                         ", using it for dts\n", dts);
             } else if (has_sidx && !c->use_tfdt || fallback_sidx) {
@@ -6350,13 +6351,13 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                 av_log(c->fc, AV_LOG_DEBUG, "found sidx time %"PRId64
                         ", using it for dts\n", frag_stream_info->sidx_pts);
             } else {
-                dts = sc->track_end - sc->time_offset;
+                dts = av_sat_sub64(sc->track_end, sc->time_offset);
                 av_log(c->fc, AV_LOG_DEBUG, "found track end time %"PRId64
                         ", using it for dts\n", dts);
             }
         }
     } else {
-        dts = sc->track_end - sc->time_offset;
+        dts = av_sat_sub64(sc->track_end, sc->time_offset);
         av_log(c->fc, AV_LOG_DEBUG, "found track end time %"PRId64
                 ", using it for dts\n", dts);
     }
@@ -6446,11 +6447,11 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
         mov_update_dts_shift(sc, ctts_duration, c->fc);
         if (pts != AV_NOPTS_VALUE) {
-            dts = pts - sc->dts_shift;
+            dts = av_sat_sub64(pts, sc->dts_shift);
             if (flags & MOV_TRUN_SAMPLE_CTS) {
-                dts -= ctts_duration;
+                dts = av_sat_sub64(dts, ctts_duration);
             } else {
-                dts -= sc->time_offset;
+                dts = av_sat_sub64(dts, sc->time_offset);
             }
             av_log(c->fc, AV_LOG_DEBUG,
                    "pts %"PRId64" calculated dts %"PRId64
@@ -6504,7 +6505,7 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         }
     }
     if (frag_stream_info)
-        frag_stream_info->next_trun_dts = dts + sc->time_offset;
+        frag_stream_info->next_trun_dts = av_sat_add64(dts, sc->time_offset);
     if (i < entries) {
         // EOF found before reading all entries.  Fix the hole this would
         // leave in index_entries and tts_data
@@ -6551,7 +6552,7 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     frag->implicit_offset = offset;
 
-    sc->track_end = dts + sc->time_offset;
+    sc->track_end = av_sat_add64(dts, sc->time_offset);
     if (st->duration < sc->track_end)
         st->duration = sc->track_end;
 
@@ -8350,12 +8351,12 @@ static int mov_read_saio(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
 static int mov_read_pssh(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
-    AVEncryptionInitInfo *info, *old_init_info;
+    AVEncryptionInitInfo *info;
     uint8_t **key_ids;
     AVStream *st;
-    const AVPacketSideData *old_side_data;
-    uint8_t *side_data, *extra_data;
-    size_t side_data_size;
+    AVPacketSideData *old_side_data = NULL;
+    uint8_t *side_data = NULL, *extra_data;
+    size_t side_data_size = 0;
     int ret = 0;
     unsigned int version, kid_count, extra_data_size, alloc_size = 0;
 
@@ -8432,37 +8433,35 @@ static int mov_read_pssh(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     info->data = extra_data;
     info->data_size = extra_data_size;
 
-    // If there is existing initialization data, append to the list.
-    old_side_data = av_packet_side_data_get(st->codecpar->coded_side_data, st->codecpar->nb_coded_side_data,
-                                            AV_PKT_DATA_ENCRYPTION_INIT_INFO);
-    if (old_side_data) {
-        old_init_info = av_encryption_init_info_get_side_data(old_side_data->data, old_side_data->size);
-        if (old_init_info) {
-            // Append to the end of the list.
-            for (AVEncryptionInitInfo *cur = old_init_info;; cur = cur->next) {
-                if (!cur->next) {
-                    cur->next = info;
-                    break;
-                }
-            }
-            info = old_init_info;
-        } else {
-            // Assume existing side-data will be valid, so the only error we could get is OOM.
-            ret = AVERROR(ENOMEM);
-            goto finish;
-        }
-    }
+    for (int i = 0; i < st->codecpar->nb_coded_side_data; i++)
+        if (st->codecpar->coded_side_data[i].type == AV_PKT_DATA_ENCRYPTION_INIT_INFO)
+            old_side_data = &st->codecpar->coded_side_data[i];
 
-    side_data = av_encryption_init_info_add_side_data(info, &side_data_size);
-    if (!side_data) {
+    // If there is existing initialization data, append the new record to it.
+    if (old_side_data) {
+        side_data      = old_side_data->data;
+        side_data_size = old_side_data->size;
+    }
+    if (!old_side_data || side_data != c->pssh_side_data)
+        c->pssh_side_data_allocated = 0;
+
+    ret = av_encryption_init_info_append_side_data(&side_data, &side_data_size,
+                                                   &c->pssh_side_data_allocated, info);
+    if (ret < 0)
+        goto finish;
+
+    if (old_side_data) {
+        old_side_data->data = side_data;
+        old_side_data->size = side_data_size;
+    } else if (!av_packet_side_data_add(&st->codecpar->coded_side_data,
+                                        &st->codecpar->nb_coded_side_data,
+                                        AV_PKT_DATA_ENCRYPTION_INIT_INFO,
+                                        side_data, side_data_size, 0)) {
+        av_free(side_data);
         ret = AVERROR(ENOMEM);
         goto finish;
     }
-    if (!av_packet_side_data_add(&st->codecpar->coded_side_data,
-                                 &st->codecpar->nb_coded_side_data,
-                                 AV_PKT_DATA_ENCRYPTION_INIT_INFO,
-                                 side_data, side_data_size, 0))
-        av_free(side_data);
+    c->pssh_side_data = side_data;
 
 finish:
     av_encryption_init_info_free(info);
@@ -9452,9 +9451,13 @@ static int mov_read_auxc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
            c->cur_item_id, aux_type.str);
 
     item = get_heif_item(c, c->cur_item_id);
-    if (item && (av_stristr(aux_type.str, "hdrgainmap")))
-        item->is_gainmap = 1;
-
+    if (item) {
+        if ((av_stristr(aux_type.str, "hdrgainmap")))
+            item->is_gainmap = 1;
+        else if (strstr(aux_type.str, "urn:mpeg:hevc:2015:auxid:1") ||
+                 strstr(aux_type.str, "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"))
+            item->is_alpha = 1;
+    }
     return 0;
 }
 
@@ -11111,28 +11114,22 @@ static int set_exif_from_item(AVFormatContext *s,
                                                     AV_PKT_DATA_EXIF);
     const AVExifMetadata *ifd = &item->ifd;
     AVBufferRef *buf = NULL;
-    int64_t offset;
     int err;
 
     if (sd)
         return 0;
 
-    err = av_exif_write(s, ifd, &buf, AV_EXIF_T_OFF);
+    err = av_exif_write(s, ifd, &buf, AV_EXIF_TIFF_HEADER);
     if (err < 0)
         return err;
 
-    offset = AV_RB32(buf->data) + 4;
-    if (offset >= buf->size) {
-        av_buffer_unref(&buf);
-        return AVERROR_INVALIDDATA;
-    }
     sd = av_packet_side_data_new(coded_side_data, nb_coded_side_data,
-                                 AV_PKT_DATA_EXIF, buf->size - offset, 0);
+                                 AV_PKT_DATA_EXIF, buf->size, 0);
     if (!sd) {
         av_buffer_unref(&buf);
         return AVERROR(ENOMEM);
     }
-    memcpy(sd->data, buf->data + offset, buf->size - offset);
+    memcpy(sd->data, buf->data, buf->size);
 
     av_buffer_unref(&buf);
 
@@ -11671,8 +11668,8 @@ static int mov_parse_heif_layered_video_tmap(AVFormatContext *s, const HEIFGroup
     }
     avio_r8(s->pb); /* version */
 
-    err = avio_read(s->pb, payload, tmap->item->extent_length);
-    if (err == tmap->item->extent_length)
+    err = avio_read(s->pb, payload, tmap->item->extent_length - 1);
+    if (err == (tmap->item->extent_length - 1))
         err64 = avio_seek(s->pb, pos, SEEK_SET);
     else {
         err = err < 0 ? err : AVERROR_INVALIDDATA;
@@ -11683,11 +11680,14 @@ static int mov_parse_heif_layered_video_tmap(AVFormatContext *s, const HEIFGroup
         goto fail;
     }
 
-    err = av_gain_map_params_from_iso21496(gain, payload, tmap->item->extent_length);
+    err = av_gain_map_params_from_iso21496(gain, payload, tmap->item->extent_length - 1);
     av_freep(&payload);
-    if (err < 0)
+    if (err < 0) {
+        av_log(s, AV_LOG_ERROR, "Invalid ISO 21496-1 gain map payload\n");
+        ff_remove_stream_group(s, stg);
+        err = (s->error_recognition & (AV_EF_COMPLIANT|AV_EF_EXPLODE)) ? AVERROR_INVALIDDATA : 0;
         goto fail;
-
+    }
     for (int j = 0; j < tmap->nb_items; j++) {
         HEIFItem *item = tmap->item_list[j];
         AVPacketSideData *sd;
@@ -11757,9 +11757,66 @@ fail:
     return err;
 }
 
+static int mov_parse_heif_layered_video_auxl_alpha(AVFormatContext *s,
+                                                   HEIFItem *base, HEIFItem *alpha)
+{
+    AVStreamGroupLayeredVideo *layered_video;
+    AVStreamGroup *stg;
+    int err;
+
+    if ((!alpha->st && !alpha->stg) ||
+        (!base->st && !base->stg)) {
+        av_log(s, AV_LOG_WARNING, "HEIF alpha id %d or its base doesn't reference "
+                                  "a stream or group\n",
+               alpha->item_id);
+        return 0;
+    }
+
+    stg = avformat_stream_group_create(s, AV_STREAM_GROUP_PARAMS_ALPHA, NULL);
+    if (!stg)
+        return AVERROR(ENOMEM);
+
+    stg->id = alpha->item_id;
+    layered_video = stg->params.layered_video;
+
+    layered_video->width  = base->width;
+    layered_video->height = base->height;
+    layered_video->el_index = 1;
+
+    av_assert0(!base->st != !base->stg);
+    if (base->st)
+        err = avformat_stream_group_add_stream(stg, base->st);
+    else
+        err = avformat_stream_group_add_stream_group(stg, base->stg);
+    if (err < 0) {
+        if (err == AVERROR(EEXIST))
+            err = AVERROR_INVALIDDATA;
+        return err;
+    }
+
+    av_assert0(!alpha->st != !alpha->stg);
+    if (alpha->st)
+        err = avformat_stream_group_add_stream(stg, alpha->st);
+    else
+        err = avformat_stream_group_add_stream_group(stg, alpha->stg);
+    if (err < 0) {
+        if (err == AVERROR(EEXIST))
+            err = AVERROR_INVALIDDATA;
+        return err;
+    }
+
+    // Apply all references from the base image to the Alpha group
+    err = mov_apply_heif_item_references(s, base, &stg->coded_side_data,
+                                                  &stg->nb_coded_side_data);
+    if (err < 0)
+        return err;
+
+    return 0;
+}
+
 // Parse Apple style Gain Map metadata from Exif values
 // See https://developer.apple.com/documentation/appkit/applying-apple-hdr-effect-to-your-photos
-static int mov_parse_heif_layered_video_auxl(AVFormatContext *s,
+static int mov_parse_heif_layered_video_auxl_gmap(AVFormatContext *s,
                                              HEIFItem *base, HEIFItem *gain_map)
 {
     AVStreamGroupLayeredVideo *layered_video;
@@ -11920,13 +11977,18 @@ static int mov_parse_heif_layered_video(AVFormatContext *s)
             av_assert0(ref);
             switch(item->iref_to_list[j].type) {
             case MKTAG('a','u','x','l'):
-                if (!item->is_gainmap)
+                if (item->is_alpha) {
+                    err = mov_parse_heif_layered_video_auxl_alpha(s, ref, item);
+                    if (err < 0)
+                       return err;
                     break;
-
-                err = mov_parse_heif_layered_video_auxl(s, ref, item);
-                if (err < 0)
-                   return err;
-                break;
+                }
+                if (item->is_gainmap) {
+                    err = mov_parse_heif_layered_video_auxl_gmap(s, ref, item);
+                    if (err < 0)
+                       return err;
+                    break;
+                }
             }
         }
     }
@@ -11988,15 +12050,13 @@ static int mov_parse_heif_items(AVFormatContext *s)
         mov_build_index(mov, st);
     }
 
-    if (mov->nb_heif_group) {
-        err = mov_parse_tiles(s);
-        if (err < 0)
-            return err;
+    err = mov_parse_tiles(s);
+    if (err < 0)
+        return err;
 
-        err = mov_parse_heif_layered_video(s);
-        if (err < 0)
-            return err;
-    }
+    err = mov_parse_heif_layered_video(s);
+    if (err < 0)
+        return err;
 
     return 0;
 }
@@ -12586,6 +12646,7 @@ static int mov_switch_root(AVFormatContext *s, int64_t target, int index)
     }
 
     mov->found_mdat = 0;
+    mov->pssh_side_data = NULL;
 
     ret = mov_read_default(mov, s->pb, (MOVAtom){ AV_RL32("root"), INT64_MAX });
     if (ret < 0)

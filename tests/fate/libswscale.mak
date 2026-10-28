@@ -1,3 +1,7 @@
+FATE_LIBSWSCALE += fate-sws-unscaled-threaded
+fate-sws-unscaled-threaded: libswscale/tests/unscaled_threaded$(EXESUF)
+fate-sws-unscaled-threaded: CMD = run libswscale/tests/unscaled_threaded$(EXESUF)
+
 FATE_LIBSWSCALE += fate-sws-pixdesc-query
 fate-sws-pixdesc-query: libswscale/tests/pixdesc_query$(EXESUF)
 fate-sws-pixdesc-query: CMD = run libswscale/tests/pixdesc_query$(EXESUF)
@@ -54,9 +58,7 @@ endif
 ifeq ($(ARCH_AARCH64),yes)
 SWS_UNSTABLE_BACKENDS-$(HAVE_NEON)                   += aarch64
 endif
-# TODO: enable spirv tests once they pass on all Vulkan devices.
-# SWS_UNSTABLE_BACKENDS-$(HAVE_SPIRV_HEADERS_SPIRV_H)  += spirv
-# SWS_UNSTABLE_BACKENDS-$(HAVE_SPIRV_UNIFIED1_SPIRV_H) += spirv
+SWS_UNSTABLE_BACKENDS-$(CONFIG_SWSCALE_VULKAN)       += spirv
 
 # Set -hw default for Vulkan tests.
 fate-sws-unscaled-spirv fate-sws-unstable-spirv: SWS_HW = -hw default
@@ -75,7 +77,21 @@ $(FATE_SWS_UNSTABLE): CMD = run libswscale/tests/swscale$(EXESUF) -v 16 $(SWS_HW
 $(FATE_SWS_UNSTABLE): REF = /dev/null
 fate-sws-unstable: $(FATE_SWS_UNSTABLE)
 
-FATE_LIBSWSCALE += $(FATE_SWS_UNSCALED) $(FATE_SWS_UNSTABLE)
+# Also test unpadded and vertically flipped (negative stride) buffers
+SWS_CPU_BACKENDS := $(filter-out spirv,$(SWS_UNSTABLE_BACKENDS-yes))
+FATE_SWS_UNPADDED := $(SWS_CPU_BACKENDS:%=fate-sws-unpadded-%)
+$(FATE_SWS_UNPADDED): libswscale/tests/swscale$(EXESUF)
+$(FATE_SWS_UNPADDED): CMD = run libswscale/tests/swscale$(EXESUF) -v 16 -backends $(@:fate-sws-unpadded-%=%) -align_src 1 -align_dst 1 -p 0.01
+$(FATE_SWS_UNPADDED): REF = /dev/null
+fate-sws-unpadded: $(FATE_SWS_UNPADDED)
+
+FATE_SWS_FLIPPED := $(SWS_CPU_BACKENDS:%=fate-sws-flipped-%)
+$(FATE_SWS_FLIPPED): libswscale/tests/swscale$(EXESUF)
+$(FATE_SWS_FLIPPED): CMD = run libswscale/tests/swscale$(EXESUF) -v 16 -backends $(@:fate-sws-flipped-%=%) -align_src -1 -align_dst -1 -p 0.01
+$(FATE_SWS_FLIPPED): REF = /dev/null
+fate-sws-flipped: $(FATE_SWS_FLIPPED)
+
+FATE_LIBSWSCALE += $(FATE_SWS_UNSCALED) $(FATE_SWS_UNSTABLE) $(FATE_SWS_UNPADDED) $(FATE_SWS_FLIPPED)
 endif
 
 ifneq ($(HAVE_BIGENDIAN),yes)
@@ -86,16 +102,32 @@ FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += fate-sws-ops-list
 fate-sws-ops-list: libswscale/tests/sws_ops$(EXESUF)
 fate-sws-ops-list: CMD = run libswscale/tests/sws_ops$(EXESUF) | do_md5sum | cut -d" " -f1
 
+FATE_SWS_UOPS_MACROS = fate-sws-uops-macros-c                          \
+                       fate-sws-uops-macros-x86                        \
+                       fate-sws-uops-macros-x86-nasm                   \
+
 ifeq ($(HAVE_INT128),yes)
 # Disable by default without int128 because it is too slow (several minutes)
-FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += fate-sws-uops-macros
+FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += $(FATE_SWS_UOPS_MACROS)
 endif
 
 # Disable on bigendian because it would result in a different iteration order
 # (and thus output) due to sorting by memcmp() on the parameters struct.
-fate-sws-uops-macros: libswscale/uops_macros_gen$(EXESUF)
-fate-sws-uops-macros: REF = $(SRC_PATH)/libswscale/uops_macros.h
-fate-sws-uops-macros: CMD = run libswscale/uops_macros_gen$(EXESUF)
+fate-sws-uops-macros-c: libswscale/uops_macros_gen$(EXESUF)
+fate-sws-uops-macros-c: REF = $(SRC_PATH)/libswscale/uops_macros.h
+fate-sws-uops-macros-c: CMD = run libswscale/uops_macros_gen$(EXESUF)
+
+fate-sws-uops-macros-x86: libswscale/uops_macros_gen$(EXESUF)
+fate-sws-uops-macros-x86: REF = $(SRC_PATH)/libswscale/x86/uops_macros.h
+fate-sws-uops-macros-x86: CMD = run libswscale/uops_macros_gen$(EXESUF) -backend x86 \
+                                -nasm $(TARGET_PATH)/tests/data/fate/sws-uops-macros-x86.asm
+
+# Generated together with fate-sws-uops-macros-x86, since enumeration is slow
+fate-sws-uops-macros-x86-nasm: fate-sws-uops-macros-x86
+fate-sws-uops-macros-x86-nasm: REF = $(SRC_PATH)/libswscale/x86/uops_macros.asm
+fate-sws-uops-macros-x86-nasm: CMD = cat tests/data/fate/sws-uops-macros-x86.asm
+
+fate-sws-uops-macros: $(FATE_SWS_UOPS_MACROS)
 
 endif
 

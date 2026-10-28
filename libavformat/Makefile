@@ -140,8 +140,6 @@ OBJS-$(CONFIG_ARGO_CVG_DEMUXER)          += argo_cvg.o
 OBJS-$(CONFIG_ARGO_CVG_MUXER)            += argo_cvg.o
 OBJS-$(CONFIG_ASF_DEMUXER)               += asfdec_f.o asf.o asfcrypt.o \
                                             asf_tags.o
-OBJS-$(CONFIG_ASF_O_DEMUXER)             += asfdec_o.o asf.o asfcrypt.o \
-                                            asf_tags.o
 OBJS-$(CONFIG_ASF_MUXER)                 += asfenc.o asf.o asf_tags.o
 OBJS-$(CONFIG_ASS_DEMUXER)               += assdec.o subtitles.o
 OBJS-$(CONFIG_ASS_MUXER)                 += assenc.o
@@ -348,6 +346,7 @@ OBJS-$(CONFIG_IVF_MUXER)                 += ivfenc.o
 OBJS-$(CONFIG_IVR_DEMUXER)               += rmdec.o rm.o rmsipr.o
 OBJS-$(CONFIG_JACOSUB_DEMUXER)           += jacosubdec.o subtitles.o
 OBJS-$(CONFIG_JACOSUB_MUXER)             += jacosubenc.o rawenc.o
+OBJS-$(CONFIG_JPEG_MPF_DEMUXER)          += jpegmpfdec.o
 OBJS-$(CONFIG_JPEG_MPF_MUXER)            += jpegmpfenc.o
 OBJS-$(CONFIG_JPEGXL_ANIM_DEMUXER)       += jpegxl_anim_dec.o
 OBJS-$(CONFIG_JV_DEMUXER)                += jvdec.o
@@ -799,11 +798,13 @@ TESTPROGS-$(CONFIG_RTPDEC)               += rtpdec
 FIFO-MUXER-TESTPROGS-$(CONFIG_NETWORK)   += fifo_muxer
 TESTPROGS-$(CONFIG_FIFO_MUXER)           += $(FIFO-MUXER-TESTPROGS-yes)
 TESTPROGS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh
+TESTPROGS-$(CONFIG_HLS_DEMUXER)          += hls
 TESTPROGS-$(CONFIG_HTTP_PROTOCOL)        += http
 TESTPROGS-$(CONFIG_NETWORK)              += noproxy
 TESTPROGS-$(CONFIG_SRTP)                 += srtp
 TESTPROGS-$(CONFIG_IMF_DEMUXER)          += imf
-TESTPROGS-$(CONFIG_MP3_MUXER)            += id3v2enc
+TESTPROGS-$(CONFIG_MP3_MUXER)            += id3v2enc id3v2chap
+TESTPROGS-$(CONFIG_AU_MUXER)             += auenc
 TESTPROGS-$(CONFIG_OGG_MUXER)            += ogg_pages
 
 TOOLS     = aviocat                                                     \

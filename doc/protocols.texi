@@ -524,7 +524,8 @@ Exports the HTTP response version number. Usually "1.0" or "1.1".
 @item cookies
 Set the cookies to be sent in future requests. The format of each cookie is the
 same as the value of a Set-Cookie HTTP response field. Multiple cookies can be
-delimited by a newline character.
+delimited by a newline character. A cookie without a Domain attribute is only
+sent to the host of the URL it is set for.
 
 @item icy
 If set to 1 request ICY (SHOUTcast) metadata from the server. If the server
@@ -675,7 +676,7 @@ is used for reading large video packets with small audio packets in between.
 
 Some HTTP requests will be denied unless cookie values are passed in with the
 request. The @option{cookies} option allows these cookies to be specified. At
-the very least, each cookie must specify a value along with a path and domain.
+the very least, each cookie must specify a value.
 HTTP requests that match both the domain and path will automatically include the
 cookie value in the HTTP Cookie header field. Multiple cookies can be delimited
 by a newline.
@@ -1783,12 +1784,18 @@ some risk of collision if the same URL is used for different content (e.g.
 as a result of extra POST data being used to select the stream ID). To avoid
 this, make sure to only use this protocol for URLs that uniquely identify
 the content; otherwise you may get a garbled mix of sources.
+This includes content selected by request options such as headers, cookies or
+credentials: data cached for one user is returned to every other user of the
+same cache directory.
 
 The accepted options are:
 @table @option
 
 @item cache_dir
 Path to the directory where cache files are stored. This option is required.
+Anyone who can write to this directory or to @option{metadata_dir} can alter
+the data read by all users of the cache, or make them crash, so neither may be
+writable by untrusted users.
 
 @item metadata_dir
 Path to the directory where metadata files are stored. Optional. If not
@@ -1800,7 +1807,7 @@ to 15, i.e. 32KB blocks. If this does not match the value that was specified
 when an existing cache file was created, the previously specified value will
 be used instead.
 
-@item read_only
+@item cache_read_only
 If true, use the shared cache for reads but don't write any new blocks to it.
 Default is false. Note that even with this option enabled, the cache file will
 be initialized if it does not already exist.
@@ -1842,8 +1849,9 @@ chosen block size. Accepts the usual size suffixes, e.g. @code{10G} for
 limit.
 
 Once this limit is reached, the protocol switches to read-only mode (see
-@option{read_only}). Already cached data is never evicted, so once this limit
-is reached, no new data will ever be cached until the cache file is deleted.
+@option{cache_read_only}). Already cached data is never evicted, so once this
+limit is reached, no new data will ever be cached until the cache file is
+deleted.
 
 Note that this option is best-effort only, and may over-write up to N-1
 blocks, where N is the number of concurrent processes using the same cache
