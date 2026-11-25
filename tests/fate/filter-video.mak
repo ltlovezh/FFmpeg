@@ -467,6 +467,10 @@ FATE_FILTER_SAMPLES-$(call FILTERDEMDEC, FORMAT PERMS GRADFUN SCALE, VMD, VMDVID
 fate-filter-gradfun-sample: tests/data/filtergraphs/gradfun
 fate-filter-gradfun-sample: CMD = framecrc -auto_conversion_filters -i $(TARGET_SAMPLES)/vmd/12.vmd -/filter $(TARGET_PATH)/tests/data/filtergraphs/gradfun -an -frames:v 20
 
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 CONCAT SENDCMD, FILE_PROTOCOL) += fate-filter-concat-next-last
+fate-filter-concat-next-last: tests/data/filtergraphs/concat-next-last
+fate-filter-concat-next-last: CMD = framecrc -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/concat-next-last
+
 FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC SINE CONCAT, FILE_PROTOCOL) += fate-filter-concat fate-filter-concat-vfr
 fate-filter-concat: tests/data/filtergraphs/concat
 fate-filter-concat: CMD = framecrc -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/concat
@@ -503,6 +507,18 @@ fate-filter-mpdecimate-mode-1: CMD = framecrc -lavfi testsrc2=r=4:d=5,fps=5,mpde
 
 FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-mode-1-min-3
 fate-filter-mpdecimate-mode-1-min-3: CMD = framecrc -lavfi testsrc2=r=2:d=7,fps=7,mpdecimate=mode=1:min=3 -pix_fmt yuv420p
+
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS FORMAT SCALE MPDECIMATE) += fate-filter-mpdecimate-yuv422p10le
+fate-filter-mpdecimate-yuv422p10le: CMD = framecrc -lavfi testsrc2=r=2:d=10,fps=3,format=yuv422p10le,scale,mpdecimate,scale -pix_fmt yuv422p10le
+
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS FORMAT SCALE MPDECIMATE) += fate-filter-mpdecimate-yuv444p16le
+fate-filter-mpdecimate-yuv444p16le: CMD = framecrc -lavfi testsrc2=r=2:d=7,fps=7,format=yuv444p16le,scale,mpdecimate=mode=1:min=3,scale -pix_fmt yuv444p16le
+
+FATE_FILTER-$(call FILTERFRAMECRC, NULLSRC SCALE FORMAT GEQ MPDECIMATE) += fate-filter-mpdecimate-hi-10bit
+fate-filter-mpdecimate-hi-10bit: CMD = framecrc -lavfi nullsrc=s=32x16:r=1:d=6,scale,format=yuv444p10,geq=lum=400+24*N:cb=512:cr=512,mpdecimate=hi=768:lo=2147483647,scale -pix_fmt yuv444p10le
+
+FATE_FILTER-$(call FILTERFRAMECRC, NULLSRC SCALE FORMAT GEQ MPDECIMATE) += fate-filter-mpdecimate-lo-10bit
+fate-filter-mpdecimate-lo-10bit: CMD = framecrc -lavfi nullsrc=s=32x16:r=1:d=6,scale,format=yuv444p10,geq=lum=400+20*N:cb=512:cr=512,mpdecimate=hi=2147483647:lo=320,scale -pix_fmt yuv444p10le
 
 FATE_FILTER-$(call FILTERFRAMECRC, FPS TESTSRC2) += $(addprefix fate-filter-fps-, up up-round-down up-round-up down down-round-down down-round-up down-eof-pass start-drop start-fill single)
 fate-filter-fps-up: CMD = framecrc -lavfi testsrc2=r=3:d=2,fps=7
@@ -681,6 +697,11 @@ fate-filter-edgedetect-colormix: CMD = video_filter "scale,format=gbrp,perms=ran
 
 FATE_FILTER_VSYNTH_VIDEO_FILTER-$(CONFIG_MEDIAN_FILTER) += fate-filter-median
 fate-filter-median: CMD = video_filter "median=radius=5"
+
+# Exercise the 16-bit median template (DEPTH=16, BINS=256), whose
+# histogram scratch used to be a ~132 KiB on-stack array.
+FATE_FILTER-$(call FILTERFRAMECRC, MEDIAN TESTSRC2 FORMAT SCALE) += fate-filter-median16
+fate-filter-median16: CMD = framecrc -lavfi "testsrc2=size=64x64:rate=5:duration=1,format=gray16le,scale,format=gray16,median=radius=3,scale" -pix_fmt gray16le -frames:v 5
 
 FATE_FILTER_VSYNTH_VIDEO_FILTER-$(call ALLYES, PERMS_FILTER HUE_FILTER) += fate-filter-hue1 fate-filter-hue2 fate-filter-hue3
 fate-filter-hue1: CMD = video_filter "perms=random,hue=s=sin(2*PI*t)+1" -frames:v 20
@@ -889,6 +910,14 @@ FATE_METADATA_FILTER-$(call ALLYES, $(SCENEDETECT_DEPS)) += fate-filter-metadata
 fate-filter-metadata-scenedetect: SRC = $(TARGET_SAMPLES)/svq3/Vertical400kbit.sorenson3.mov
 fate-filter-metadata-scenedetect: CMD = run $(FILTER_METADATA_COMMAND) "sws_flags=+accurate_rnd+bitexact;movie='$(SRC)',select=gt(scene\,.25)"
 
+define FATE_SCENEDETECT_PIXFMT
+FATE_METADATA_FILTER-$$(call ALLYES, $$(SCENEDETECT_DEPS) FORMAT_FILTER) += fate-filter-metadata-scenedetect-$(1)
+fate-filter-metadata-scenedetect-$(1): SRC = $$(TARGET_SAMPLES)/svq3/Vertical400kbit.sorenson3.mov
+fate-filter-metadata-scenedetect-$(1): CMD = run ffprobe$$(PROGSSUF)$$(EXESUF) -of compact=p=0 -show_entries frame=pts,pix_fmt:frame_tags -bitexact -f lavfi "sws_flags=+accurate_rnd+bitexact;movie='$$(SRC)',format=$(1),select=gt(scene\,.25)"
+endef
+
+$(foreach FMT,gray10le rgb48le rgb48be yuv422p10be yuv422p10le yuv444p16le,$(eval $(call FATE_SCENEDETECT_PIXFMT,$(FMT))))
+
 SCDET_DEPS = LAVFI_INDEV MOVIE_FILTER SCDET_FILTER SCALE_FILTER \
                    MOV_DEMUXER SVQ3_DECODER ZLIB
 FATE_METADATA_FILTER-$(call ALLYES, $(SCDET_DEPS)) += fate-filter-metadata-scdet
@@ -906,6 +935,10 @@ fate-filter-metadata-cropdetect1: CMD = run $(FILTER_METADATA_COMMAND) "sws_flag
 FATE_METADATA_FILTER-$(call ALLYES, $(CROPDETECT_DEPS)) += fate-filter-metadata-cropdetect2
 fate-filter-metadata-cropdetect2: SRC = $(TARGET_SAMPLES)/filter/cropdetect2.mp4
 fate-filter-metadata-cropdetect2: CMD = run $(FILTER_METADATA_COMMAND) "sws_flags=+accurate_rnd+bitexact;movie='$(SRC)',mestimate,cropdetect=mode=mvedges,metadata=mode=print"
+
+IDET_DEPS = FFPROBE LAVFI_INDEV WRAPPED_AVFRAME_DECODER TESTSRC2_FILTER WEAVE_FILTER CONCAT_FILTER CROP_FILTER FORMAT_FILTER SCALE_FILTER IDET_FILTER
+FATE_FILTER_FFPROBE-$(call ALLYES, $(IDET_DEPS)) += fate-filter-metadata-idet
+fate-filter-metadata-idet: CMD = run $(FILTER_METADATA_COMMAND) "testsrc2=s=720x288:r=50:d=0.4,weave[a];testsrc2=s=720x288:r=50:d=0.4,weave=bottom[b];testsrc2=s=720x576:r=25:d=0.4[c];[a][b][c]concat=n=3,format=yuv422p10le,crop=720:575:0:0,format=yuv422p10,idet"
 
 FREEZEDETECT_DEPS = LAVFI_INDEV MPTESTSRC_FILTER SCALE_FILTER FREEZEDETECT_FILTER
 FATE_METADATA_FILTER-$(call ALLYES, $(FREEZEDETECT_DEPS)) += fate-filter-metadata-freezedetect
@@ -968,6 +1001,10 @@ fate-filter-refcmp-psnr-rgb: CMD = refcmp_metadata psnr rgb24 0.002
 
 FATE_FILTER_REFCMP_METADATA-$(CONFIG_PSNR_FILTER) += fate-filter-refcmp-psnr-yuv
 fate-filter-refcmp-psnr-yuv: CMD = refcmp_metadata psnr yuv422p 0.0015
+
+FATE_FILTER_REFCMP_METADATA-$(call ALLYES, PSNR_FILTER VIGNETTE_FILTER) += fate-filter-vignette-wavelet fate-filter-vignette-wavelet-decimated
+fate-filter-vignette-wavelet:           CMD = refcmp_metadata psnr yuv420p 0.005 "vignette=angle=PI/2*0.8,vignette=angle=PI/2*0.8:mode=wavelet"
+fate-filter-vignette-wavelet-decimated: CMD = refcmp_metadata psnr yuv420p 0.005 "vignette=angle=PI/2*0.8,vignette=angle=PI/2*0.8:mode=wavelet:decimated=1"
 
 FATE_FILTER_REFCMP_METADATA-$(call ALLYES, SSIM_FILTER SCALE_FILTER) += fate-filter-refcmp-ssim-rgb
 fate-filter-refcmp-ssim-rgb: CMD = refcmp_metadata ssim rgb24 0.015

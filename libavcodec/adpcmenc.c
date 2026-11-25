@@ -288,7 +288,7 @@ static inline uint8_t adpcm_ms_compress_sample(ADPCMChannelStatus *c,
     int predictor, nibble, bias;
 
     predictor = (((c->sample1) * (c->coeff1)) +
-                (( c->sample2) * (c->coeff2))) / 64;
+                (( c->sample2) * (c->coeff2))) >> 6;
 
     nibble = sample - predictor;
     if (nibble >= 0)
@@ -388,7 +388,7 @@ static void adpcm_compress_trellis(AVCodecContext *avctx,
             int nidx;
             if (version == AV_CODEC_ID_ADPCM_MS) {
                 const int predictor = ((nodes[j]->sample1 * c->coeff1) +
-                                       (nodes[j]->sample2 * c->coeff2)) / 64;
+                                       (nodes[j]->sample2 * c->coeff2)) >> 6;
                 const int div  = (sample - predictor) / step;
                 const int nmin = av_clip(div-range, -8, 6);
                 const int nmax = av_clip(div+range, -7, 7);
@@ -782,9 +782,9 @@ static int adpcm_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
             if (!buf)
                 return AVERROR(ENOMEM);
             if (channels == 1) {
-                adpcm_compress_trellis(avctx, samples, buf, &c->status[0], n,
+                adpcm_compress_trellis(avctx, samples, buf, &c->status[0], 2 * n,
                                        channels);
-                for (int i = 0; i < n; i += 2)
+                for (int i = 0; i < 2 * n; i += 2)
                     *dst++ = (buf[i] << 4) | buf[i + 1];
             } else {
                 adpcm_compress_trellis(avctx, samples,     buf,

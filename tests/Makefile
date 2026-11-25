@@ -77,6 +77,16 @@ tests/data/fate/apng-small-bpp-%.png: TAG = GEN
 tests/data/fate/apng-small-bpp-%.png: tests/apnggen$(HOSTEXESUF) | tests/data/fate
 	$(M)./$< $@
 
+# Large ancillary chunk before the first IDAT (issue #26132).
+tests/data/fate/apng-biganc-%.png: TAG = GEN
+tests/data/fate/apng-biganc-%.png: tests/apnggen$(HOSTEXESUF) | tests/data/fate
+	$(M)./$< $@
+
+# Ancillary chunk placed so a probe boundary splits the next header or PLTE.
+tests/data/fate/apng-bnd%.png: TAG = GEN
+tests/data/fate/apng-bnd%.png: tests/apnggen$(HOSTEXESUF) | tests/data/fate
+	$(M)./$< $@
+
 RUNNING_FATE := $(filter check fate%,$(filter-out fate-rsync,$(MAKECMDGOALS)))
 
 # Check sanity of dependencies when running FATE tests.
@@ -201,6 +211,7 @@ include $(SRC_PATH)/tests/fate/astc.mak
 # Must be included after lavf-video.mak
 include $(SRC_PATH)/tests/fate/ffmpeg.mak
 include $(SRC_PATH)/tests/fate/ffprobe.mak
+include $(SRC_PATH)/tests/fate/ffv1.mak
 include $(SRC_PATH)/tests/fate/fifo-muxer.mak
 include $(SRC_PATH)/tests/fate/filter-audio.mak
 # Must be included after vcodec.mak
@@ -242,9 +253,12 @@ include $(SRC_PATH)/tests/fate/mpeg4.mak
 include $(SRC_PATH)/tests/fate/mpegps.mak
 include $(SRC_PATH)/tests/fate/mpegts.mak
 include $(SRC_PATH)/tests/fate/mxf.mak
+include $(SRC_PATH)/tests/fate/notchlc.mak
 include $(SRC_PATH)/tests/fate/ogg-vorbis.mak
 include $(SRC_PATH)/tests/fate/ogg-flac.mak
 include $(SRC_PATH)/tests/fate/ogg-opus.mak
+include $(SRC_PATH)/tests/fate/ogg-chain-copy.mak
+include $(SRC_PATH)/tests/fate/ogg-theora.mak
 include $(SRC_PATH)/tests/fate/oma.mak
 include $(SRC_PATH)/tests/fate/opus.mak
 include $(SRC_PATH)/tests/fate/pcm.mak

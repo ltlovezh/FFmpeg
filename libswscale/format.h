@@ -57,6 +57,10 @@ enum {
     FIELD_BOTTOM, /* bottom/odd rows */
 };
 
+/* The X'Y'Z' conversion: ST 428-1 codes to and from gamma 2.2 RGB */
+#define XYZ_TRC     AVCOL_TRC_SMPTE428
+#define XYZ_RGB_TRC AVCOL_TRC_GAMMA22
+
 typedef struct SwsColor {
     enum AVColorPrimaries prim;
     enum AVColorTransferCharacteristic trc;
@@ -209,6 +213,12 @@ typedef struct SwsFrame {
      */
     int width, height;
     enum AVPixelFormat format;
+
+    /**
+     * Number of bytes after the last pixel of each line that may be read
+     * (input frames) or written (output frames).
+     */
+    int padding[4];
 
     /**
      * Pointer to the original AVFrame, if there is a 1:1 correspondence.

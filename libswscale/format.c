@@ -21,6 +21,7 @@
 #include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
 #include "libavutil/hdr_dynamic_metadata.h"
+#include "libavutil/hwcontext.h"
 #include "libavutil/mastering_display_metadata.h"
 #include "libavutil/refstruct.h"
 
@@ -28,10 +29,7 @@
 #include "csputils.h"
 #include "ops_internal.h"
 #include "config_components.h"
-
-#if CONFIG_UNSTABLE
-#include "libavutil/hwcontext.h"
-#endif
+#include "swscale_internal.h"
 
 #define RET(x)                                                                 \
     do {                                                                       \
@@ -235,8 +233,8 @@ static const LegacyFormatEntry legacy_format_entries[] = {
     [AV_PIX_FMT_GRAYF32BE]      = { 1, 1 },
     [AV_PIX_FMT_GRAYF16LE]      = { 1, 0 },
     [AV_PIX_FMT_GRAYF16BE]      = { 1, 0 },
-    [AV_PIX_FMT_YAF32LE]        = { 1, 0 },
-    [AV_PIX_FMT_YAF32BE]        = { 1, 0 },
+    [AV_PIX_FMT_YAF32LE]        = { 1, 1 },
+    [AV_PIX_FMT_YAF32BE]        = { 1, 1 },
     [AV_PIX_FMT_YAF16LE]        = { 1, 0 },
     [AV_PIX_FMT_YAF16BE]        = { 1, 0 },
     [AV_PIX_FMT_YUVA422P12BE]   = { 1, 1 },
@@ -271,8 +269,10 @@ static const LegacyFormatEntry legacy_format_entries[] = {
     [AV_PIX_FMT_RGBAF16LE]      = { 1, 0 },
     [AV_PIX_FMT_RGBF16BE]       = { 1, 0 },
     [AV_PIX_FMT_RGBF16LE]       = { 1, 0 },
-    [AV_PIX_FMT_RGBF32BE]       = { 1, 0 },
-    [AV_PIX_FMT_RGBF32LE]       = { 1, 0 },
+    [AV_PIX_FMT_RGBF32BE]       = { 1, 1 },
+    [AV_PIX_FMT_RGBF32LE]       = { 1, 1 },
+    [AV_PIX_FMT_RGBAF32BE]      = { 1, 1 },
+    [AV_PIX_FMT_RGBAF32LE]      = { 1, 1 },
     [AV_PIX_FMT_XV30LE]         = { 1, 1 },
     [AV_PIX_FMT_XV36LE]         = { 1, 1 },
     [AV_PIX_FMT_XV36BE]         = { 1, 1 },
@@ -318,11 +318,11 @@ static void sanitize_fmt(SwsFormat *fmt, const AVPixFmtDescriptor *desc)
         /* Grayscale formats */
         fmt->color.prim = AVCOL_PRI_UNSPECIFIED;
         fmt->csp        = AVCOL_SPC_UNSPECIFIED;
-        if (desc->flags & AV_PIX_FMT_FLAG_FLOAT)
-            fmt->range = AVCOL_RANGE_UNSPECIFIED;
-        else
-            fmt->range = AVCOL_RANGE_JPEG; // FIXME: this restriction should be lifted
+        fmt->range      = AVCOL_RANGE_JPEG; // FIXME: this restriction should be lifted
     }
+
+    if (desc->flags & AV_PIX_FMT_FLAG_FLOAT)
+        fmt->range = AVCOL_RANGE_UNSPECIFIED;
 
     switch (av_pix_fmt_desc_get_id(desc)) {
     case AV_PIX_FMT_YUVJ420P:
@@ -350,7 +350,6 @@ SwsFormat ff_fmt_from_frame(const AVFrame *frame, int field)
     enum AVPixelFormat format = frame->format;
     enum AVPixelFormat hw_format = AV_PIX_FMT_NONE;
 
-#if CONFIG_UNSTABLE
     const AVPixFmtDescriptor *hw_desc = av_pix_fmt_desc_get(frame->format);
     av_assert0(hw_desc);
 
@@ -361,7 +360,6 @@ SwsFormat ff_fmt_from_frame(const AVFrame *frame, int field)
         hw_format = frame->format;
         format = hwfc->sw_format;
     }
-#endif
 
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(format);
 
@@ -740,10 +738,9 @@ void ff_sws_frame_from_avframe(SwsFrame *dst, const AVFrame *src)
     for (int i = 0; i < FF_ARRAY_ELEMS(dst->data); i++) {
         dst->data[i]     = src->data[i];
         dst->linesize[i] = src->linesize[i];
+        dst->padding[i]  = 0;
     }
 }
-
-#if CONFIG_UNSTABLE
 
 /**
  * Returns the underlying descriptor for fake formats like PAL8 whose
@@ -978,6 +975,10 @@ static int fmt_analyze(enum AVPixelFormat fmt, SwsReadWriteOp *rw_op,
 
     /* No support for subsampled formats at the moment */
     if (desc->log2_chroma_w || desc->log2_chroma_h)
+        return AVERROR(ENOTSUP);
+
+    /* XYZ decoding requires TRC support, which is not implemented yet */
+    if (desc->flags & AV_PIX_FMT_FLAG_XYZ)
         return AVERROR(ENOTSUP);
 
     /* No support for semi-planar formats at the moment */
@@ -1332,7 +1333,7 @@ static AVRational64 *generate_bayer_matrix(const int size_log2)
 {
     const int size = 1 << size_log2;
     const int num_entries = size * size;
-    AVRational64 *m = av_refstruct_allocz(sizeof(*m) * num_entries);
+    AVRational64 *m = ff_refstruct_calloc(num_entries, sizeof(*m));
     av_assert1(size_log2 < 16);
     if (!m)
         return NULL;
@@ -1516,9 +1517,6 @@ static int decode_colors(SwsContext *ctx, SwsPixelType type, SwsOpList *ops,
         .lin  = fmt_decode_range(fmt, type, incomplete),
     }));
 
-    if (fmt->desc->flags & AV_PIX_FMT_FLAG_XYZ)
-        return 0; /* XYZ formats are treated as colorspaceless */
-
     /* Final step, decode colorspace */
     switch (fmt->csp) {
     case AVCOL_SPC_RGB:
@@ -1591,8 +1589,7 @@ static int encode_colors(SwsContext *ctx, SwsPixelType type, SwsOpList *ops,
     if (!pixel_type)
          return AVERROR(ENOTSUP);
 
-    /* See ff_sws_decode_colors(): XYZ formats have no colorspace matrix */
-    switch (dst->desc->flags & AV_PIX_FMT_FLAG_XYZ ? AVCOL_SPC_RGB : dst->csp) {
+    switch (dst->csp) {
     case AVCOL_SPC_RGB:
         break;
     case AVCOL_SPC_UNSPECIFIED:
@@ -1834,11 +1831,6 @@ int ff_sws_op_list_generate(SwsContext *ctx, const SwsFormat *src,
         ctx->alpha_blend != SWS_ALPHA_BLEND_NONE)
         return AVERROR(ENOTSUP);
 
-    /* XYZ<->RGB conversion requires application of a gamma function which
-     * are not currently implemented */
-    if ((src->desc->flags ^ dst->desc->flags) & AV_PIX_FMT_FLAG_XYZ)
-        return AVERROR(ENOTSUP);
-
     SwsOpList *ops = ff_sws_op_list_alloc();
     if (!ops)
         return AVERROR(ENOMEM);
@@ -1856,12 +1848,3 @@ fail:
     ff_sws_op_list_free(&ops);
     return ret;
 }
-
-#else /* !CONFIG_UNSTABLE */
-
-static int test_format_ops(enum AVPixelFormat format, int output)
-{
-    return 0;
-}
-
-#endif

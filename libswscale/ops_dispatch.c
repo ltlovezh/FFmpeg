@@ -224,12 +224,11 @@ static int op_pass_setup(const SwsFrame *out, const SwsFrame *in,
     size_t safe_blocks = num_blocks;
     for (int i = 0; i < p->planes_in; i++) {
         const int idx = p->idx_in[i];
-        size_t input_bytes = in->linesize[idx];
-        if (p->filter_size_h && float_in) {
-            /* Floating point inputs may contain NaN / Infinity in the padding */
-            const int plane_w = AV_CEIL_RSHIFT(in->width, exec->in_sub_x[i]);
-            input_bytes = pixel_bytes(plane_w, p->pixel_bits_in, AV_ROUND_UP);
-        }
+        const int plane_w = AV_CEIL_RSHIFT(in->width, exec->in_sub_x[i]);
+        size_t input_bytes = pixel_bytes(plane_w, p->pixel_bits_in, AV_ROUND_UP);
+        /* Floating point inputs may contain NaN / Infinity in the padding */
+        if (!p->filter_size_h || !float_in)
+            input_bytes += in->padding[idx];
 
         size_t safe_bytes = safe_bytes_pad(input_bytes, comp->over_read[i]);
         size_t safe_blocks_in;
@@ -256,7 +255,10 @@ static int op_pass_setup(const SwsFrame *out, const SwsFrame *in,
 
     for (int i = 0; i < p->planes_out; i++) {
         const int idx = p->idx_out[i];
-        size_t safe_bytes = safe_bytes_pad(out->linesize[idx], comp->over_write[i]);
+        const int plane_w = AV_CEIL_RSHIFT(out->width, exec->out_sub_x[i]);
+        size_t output_bytes = pixel_bytes(plane_w, p->pixel_bits_out, AV_ROUND_UP) +
+                              out->padding[idx];
+        size_t safe_bytes = safe_bytes_pad(output_bytes, comp->over_write[i]);
         size_t safe_blocks_out = safe_bytes / exec->block_size_out[i];
         if (safe_blocks_out < num_blocks) {
             p->memcpy_out = true;
@@ -571,7 +573,8 @@ static int compile_single(const CompileArgs *args, const SwsOpList *ops,
                                     input, 0, c.slice_align, c.func_opaque,
                                     NULL, c.priv, c.free, output);
         if (ret >= 0) {
-            (*output)->backend = c.backend->flags;
+            (*output)->backend   = c.backend->flags;
+            (*output)->cpu_flags = c.cpu_flags;
             op_list_get_plane_copy(ops, *output);
             ff_sws_pass_link_output(*output, link);
         }
@@ -585,8 +588,10 @@ static int compile_single(const CompileArgs *args, const SwsOpList *ops,
     p->pixel_bits_out = rw_pixel_bits(write);
     p->palette_idx    = -1;
     p->num_blocks     = (dst->width + comp->block_size - 1) / comp->block_size;
-    if (p->num_blocks * comp->block_size < (unsigned) dst->width)
-        return AVERROR(ERANGE);
+    if (p->num_blocks * comp->block_size < (unsigned) dst->width) {
+        ret = AVERROR(ERANGE);
+        goto fail;
+    }
 
     SwsOpExec *exec = &p->exec_base;
     *exec = (SwsOpExec) {
@@ -689,7 +694,8 @@ static int compile_single(const CompileArgs *args, const SwsOpList *ops,
     if (ret < 0)
         return ret;
 
-    (*output)->backend = comp->backend->flags;
+    (*output)->backend   = comp->backend->flags;
+    (*output)->cpu_flags = comp->cpu_flags;
     op_list_get_plane_copy(ops, *output);
     ff_sws_pass_link_output(*output, link);
     align_pass(*output, comp->block_size, comp->over_write, p->pixel_bits_out);
@@ -743,11 +749,7 @@ static int compile_subpass(const CompileArgs *args, SwsOpList **pops,
         }
     }
 
-    ret = compile_single(args, ops, link, input, output);
-    if (ret != AVERROR(ENOTSUP))
-        goto fail; /* either success or a hard error */
-
-    /* Find any unresolved filter */
+    /* Split off any unresolved filters, since no backend implements these */
     for (int idx = 1; idx < ops->num_ops - 1; idx++) {
         const SwsOp *op = &ops->ops[idx];
         if (op->op == SWS_OP_FILTER_H || op->op == SWS_OP_FILTER_V) {
@@ -766,11 +768,11 @@ static int compile_subpass(const CompileArgs *args, SwsOpList **pops,
         }
     }
 
-    /* If we didn't find any more operations to eliminate, then this ops list
-     * is simply unsupported by any of the available backends */
-    av_log(ctx, AV_LOG_WARNING, "No backend found for operations:\n");
-    ff_sws_op_list_print(ctx, AV_LOG_WARNING, AV_LOG_TRACE, ops);
-    ret = AVERROR(ENOTSUP);
+    ret = compile_single(args, ops, link, input, output);
+    if (ret == AVERROR(ENOTSUP)) {
+        av_log(ctx, AV_LOG_WARNING, "No backend found for operations:\n");
+        ff_sws_op_list_print(ctx, AV_LOG_WARNING, AV_LOG_TRACE, ops);
+    }
 
 fail:
     ff_sws_op_list_free(&ops);

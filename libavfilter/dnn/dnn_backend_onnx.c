@@ -54,6 +54,7 @@ typedef struct ONNXModel {
     OrtSession *session;
     OrtSessionOptions *session_options;
     OrtAllocator *allocator;
+    char *ep_registration;
     SafeQueue *request_queue;
     Queue *task_queue;
     Queue *lltask_queue;
@@ -87,6 +88,8 @@ typedef struct ONNXRequestItem {
 static const AVOption dnn_onnx_options[] = {
     { "threads_per_operation", "number of CPU threads per ORT operator (device=cpu only)",
       OFFSET(num_threads),       AV_OPT_TYPE_INT,    { .i64 = 0 },    0, INT_MAX, FLAGS },
+    { "ep_library", "path to an ONNX Runtime plugin execution provider library (device=migraphx only)",
+      OFFSET(ep_library),        AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,       FLAGS },
     { NULL }
 };
 
@@ -94,6 +97,11 @@ AVFILTER_DEFINE_CLASS(dnn_onnx);
 
 static const OrtApi *g_ort = NULL;
 static AVOnce g_ort_init_once = AV_ONCE_INIT;
+#if ORT_API_VERSION >= 22
+/* Serializes plugin EP (un)registration: ORT's device registry is
+ * process-wide even though each ONNXModel has its own OrtEnv. */
+static AVMutex g_ort_ep_mutex = AV_MUTEX_INITIALIZER;
+#endif
 
 static void init_ort_api(void)
 {
@@ -289,6 +297,18 @@ static void dnn_free_model_onnx(DNNModel **model)
         g_ort->ReleaseSession(onnx_model->session);
     if (onnx_model->session_options)
         g_ort->ReleaseSessionOptions(onnx_model->session_options);
+#if ORT_API_VERSION >= 22
+    if (onnx_model->ep_registration) {
+        OrtStatus *status;
+        ff_mutex_lock(&g_ort_ep_mutex);
+        status = g_ort->UnregisterExecutionProviderLibrary(onnx_model->env,
+                                                            onnx_model->ep_registration);
+        ff_mutex_unlock(&g_ort_ep_mutex);
+        if (status)
+            g_ort->ReleaseStatus(status);
+    }
+#endif
+    av_freep(&onnx_model->ep_registration);
     if (onnx_model->env)
         g_ort->ReleaseEnv(onnx_model->env);
 
@@ -344,6 +364,118 @@ static void append_d3d12_dml_ep(ONNXModel *onnx_model)
     av_log(ctx, AV_LOG_INFO,
            "Using DirectML execution provider on the frames' own D3D12 device%s\n",
            is_uma ? " (UMA)" : "");
+}
+#endif
+
+#if ORT_API_VERSION >= 22
+/*
+ * Registers a plugin execution provider library (e.g. the MIGraphX EP that
+ * Windows ML installs) and appends the device_id-th GPU device it exposes.
+ */
+static int append_plugin_ep_unlocked(ONNXModel *onnx_model, const char *library, const char *ep_name)
+{
+    DnnContext *ctx = onnx_model->ctx;
+    const OrtEpDevice *const *devices;
+    const OrtEpDevice **devices_before = NULL;
+    const OrtEpDevice *selected = NULL;
+    const OrtHardwareDevice *hw;
+    const char *desc;
+    size_t nb_devices, nb_devices_before;
+    int gpu_index = 0;
+    OrtStatus *status;
+#ifdef _WIN32
+    wchar_t *wlibrary = NULL;
+#endif
+
+    /* The OrtEnv is shared by the whole process, so remember which devices
+     * exist before the registration and only pick from the new ones. */
+    status = g_ort->GetEpDevices(onnx_model->env, &devices, &nb_devices_before);
+    if (status)
+        goto fail;
+    if (nb_devices_before) {
+        devices_before = av_memdup(devices, nb_devices_before * sizeof(*devices));
+        if (!devices_before)
+            return AVERROR(ENOMEM);
+    }
+
+    onnx_model->ep_registration = av_asprintf("%s.%p", ep_name, (void *)onnx_model);
+    if (!onnx_model->ep_registration) {
+        av_free(devices_before);
+        return AVERROR(ENOMEM);
+    }
+#ifdef _WIN32
+    if (utf8towchar(library, &wlibrary) || !wlibrary) {
+        av_freep(&onnx_model->ep_registration);
+        av_free(devices_before);
+        return AVERROR(ENOMEM);
+    }
+    status = g_ort->RegisterExecutionProviderLibrary(onnx_model->env,
+                                                     onnx_model->ep_registration, wlibrary);
+    av_free(wlibrary);
+#else
+    status = g_ort->RegisterExecutionProviderLibrary(onnx_model->env,
+                                                     onnx_model->ep_registration, library);
+#endif
+    if (status) {
+        av_freep(&onnx_model->ep_registration);
+        goto fail;
+    }
+
+    status = g_ort->GetEpDevices(onnx_model->env, &devices, &nb_devices);
+    if (status)
+        goto fail;
+    for (size_t i = 0; i < nb_devices && !selected; i++) {
+        const OrtHardwareDevice *hw = g_ort->EpDevice_Device(devices[i]);
+        const char *name = g_ort->EpDevice_EpName(devices[i]);
+        int is_new = 1;
+
+        for (size_t j = 0; j < nb_devices_before; j++)
+            is_new &= devices[i] != devices_before[j];
+        av_log(ctx, AV_LOG_DEBUG, "EP device %zu: %s, hardware type %d%s\n", i, name,
+               (int)g_ort->HardwareDevice_Type(hw), is_new ? ", added by this registration" : "");
+        /* Some plugin EPs, such as the MIGraphX one from Windows ML, take the
+         * registration name as their EP name. */
+        if (!is_new || (strcmp(name, ep_name) && strcmp(name, onnx_model->ep_registration)) ||
+            g_ort->HardwareDevice_Type(hw) != OrtHardwareDeviceType_GPU)
+            continue;
+        if (gpu_index++ == ctx->device_id)
+            selected = devices[i];
+    }
+    av_free(devices_before);
+    devices_before = NULL;
+    if (!selected) {
+        av_log(ctx, AV_LOG_WARNING, "'%s' provides no %s GPU device with index %d\n",
+               library, ep_name, ctx->device_id);
+        return AVERROR(ENODEV);
+    }
+
+    status = g_ort->SessionOptionsAppendExecutionProvider_V2(onnx_model->session_options,
+                                                             onnx_model->env, &selected, 1,
+                                                             NULL, NULL, 0);
+    if (status)
+        goto fail;
+
+    hw = g_ort->EpDevice_Device(selected);
+    desc = g_ort->GetKeyValue(g_ort->HardwareDevice_Metadata(hw), "Description");
+    av_log(ctx, AV_LOG_INFO, "Using %s from '%s' on device %d (%s)\n",
+           ep_name, library, ctx->device_id, desc ? desc : "unknown GPU");
+    return 0;
+
+fail:
+    av_free(devices_before);
+    av_log(ctx, AV_LOG_WARNING, "%s\n", g_ort->GetErrorMessage(status));
+    g_ort->ReleaseStatus(status);
+    return AVERROR_EXTERNAL;
+}
+
+/* Guards UnregisterExecutionProviderLibrary() in dnn_free_model_onnx(). */
+static int append_plugin_ep(ONNXModel *onnx_model, const char *library, const char *ep_name)
+{
+    int ret;
+    ff_mutex_lock(&g_ort_ep_mutex);
+    ret = append_plugin_ep_unlocked(onnx_model, library, ep_name);
+    ff_mutex_unlock(&g_ort_ep_mutex);
+    return ret;
 }
 #endif
 
@@ -472,8 +604,11 @@ static int get_input_onnx(DNNModel *model, DNNData *input, const char *input_nam
 
     if (tensor_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
         input->dt = DNN_FLOAT;
+    } else if (tensor_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
+        input->dt = DNN_UINT8;
     } else {
-        av_log(ctx, AV_LOG_ERROR, "Unsupported input tensor data type, only float is supported\n");
+        av_log(ctx, AV_LOG_ERROR, "Unsupported input tensor data type, "
+               "only float and uint8 are supported\n");
         av_free(dims);
         g_ort->ReleaseTypeInfo(type_info);
         return AVERROR(ENOSYS);
@@ -579,7 +714,7 @@ static int fill_model_input_onnx(ONNXModel *onnx_model, ONNXRequestItem *request
      * Build the byte count with checked size_t multiplications instead of
      * multiplying four int64_t shape values in one expression.
      */
-    input_tensor_size = sizeof(float);
+    input_tensor_size = (input.dt == DNN_UINT8) ? sizeof(uint8_t) : sizeof(float);
     if (av_size_mult(input_tensor_size, (size_t)input_shape[0], &input_tensor_size) < 0 ||
         av_size_mult(input_tensor_size, (size_t)input_shape[1], &input_tensor_size) < 0 ||
         av_size_mult(input_tensor_size, (size_t)input_shape[2], &input_tensor_size) < 0 ||
@@ -598,7 +733,7 @@ static int fill_model_input_onnx(ONNXModel *onnx_model, ONNXRequestItem *request
 
     switch (onnx_model->model.func_type) {
     case DFT_PROCESS_FRAME:
-        input.scale = 255;
+        input.scale = (input.dt == DNN_UINT8) ? 1 : 255;
         if (task->do_ioproc) {
             if (onnx_model->model.frame_pre_proc != NULL) {
                 ret = onnx_model->model.frame_pre_proc(task->in_frame, &input,
@@ -634,7 +769,9 @@ static int fill_model_input_onnx(ONNXModel *onnx_model, ONNXRequestItem *request
 
     status = g_ort->CreateTensorWithDataAsOrtValue(
         memory_info, input.data, input_tensor_size,
-        input_shape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+        input_shape, 4,
+        (input.dt == DNN_UINT8) ? ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8
+                                : ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
         &infer_request->input_tensor);
 
     g_ort->ReleaseMemoryInfo(memory_info);
@@ -863,9 +1000,21 @@ static void infer_completion_callback(void *args)
         }
         if (tensor_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
             outputs[i].dt = DNN_FLOAT;
+        } else if (tensor_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
+            outputs[i].dt = DNN_UINT8;
         } else {
             av_log(ctx, AV_LOG_ERROR,
-                   "Unsupported output tensor[%u] data type, only float supported\n", i);
+                   "Unsupported output tensor[%u] data type, "
+                   "only float and uint8 are supported\n", i);
+            av_free(dims);
+            g_ort->ReleaseTensorTypeAndShapeInfo(tensor_info);
+            goto err;
+        }
+
+        if (outputs[i].dt == DNN_UINT8 &&
+            onnx_model->model.func_type != DFT_PROCESS_FRAME) {
+            av_log(ctx, AV_LOG_ERROR,
+                   "UINT8 output tensors are only supported for frame processing\n");
             av_free(dims);
             g_ort->ReleaseTensorTypeAndShapeInfo(tensor_info);
             goto err;
@@ -941,7 +1090,7 @@ static void infer_completion_callback(void *args)
     switch (onnx_model->model.func_type) {
     case DFT_PROCESS_FRAME:
         if (task->do_ioproc) {
-            outputs[0].scale = 255;
+            outputs[0].scale = (outputs[0].dt == DNN_UINT8) ? 1 : 255;
             if (onnx_model->model.frame_post_proc != NULL) {
                 onnx_model->model.frame_post_proc(task->out_frame, outputs, onnx_model->model.filter_ctx);
             } else {
@@ -1139,6 +1288,8 @@ static DNNModel *dnn_load_model_onnx(DnnContext *ctx, DNNFunctionType func_type,
         (!ctx->device || av_strcasecmp(ctx->device, "cpu") == 0)) {
         g_ort->SetIntraOpNumThreads(onnx_model->session_options, options->num_threads);
     }
+    if (options->ep_library && (!ctx->device || av_strcasecmp(ctx->device, "migraphx") != 0))
+        av_log(ctx, AV_LOG_WARNING, "ep_library is only used with device=migraphx, ignoring it\n");
     g_ort->SetSessionGraphOptimizationLevel(onnx_model->session_options, ORT_ENABLE_ALL);
 
     /*
@@ -1228,14 +1379,52 @@ static DNNModel *dnn_load_model_onnx(DnnContext *ctx, DNNFunctionType func_type,
                 av_log(ctx, AV_LOG_WARNING,
                        "VitisAI provider function not available in this ONNX Runtime API version. Falling back to CPU.\n");
             }
+        } else if (av_strcasecmp(ctx->device, "migraphx") == 0) {
+            const char* migraphx_options_keys[] = {"device_id"};
+            const char* migraphx_options_values[] = {NULL};
+            char device_id_str[32];
+            snprintf(device_id_str, sizeof(device_id_str), "%d", ctx->device_id);
+            migraphx_options_values[0] = device_id_str;
+
+            if (options->ep_library) {
+#if ORT_API_VERSION >= 22
+                if (append_plugin_ep(onnx_model, options->ep_library, "MIGraphXExecutionProvider") < 0)
+                    av_log(ctx, AV_LOG_WARNING,
+                           "Failed to enable the MIGraphX plugin execution provider. Falling back to CPU\n");
+#else
+                av_log(ctx, AV_LOG_WARNING,
+                       "ep_library requires FFmpeg to be built against ONNX Runtime 1.22 or later. "
+                       "Falling back to CPU\n");
+#endif
+            } else if (g_ort->SessionOptionsAppendExecutionProvider) {
+                /* OrtMIGraphXProviderOptions changed layout in ONNX Runtime 1.23,
+                 * so use the string-keyed API, which accepts MIGraphX since 1.23. */
+                status = g_ort->SessionOptionsAppendExecutionProvider(
+                    onnx_model->session_options, "MIGraphX",
+                    migraphx_options_keys, migraphx_options_values, 1);
+                if (status != NULL) {
+                    const char *msg = g_ort->GetErrorMessage(status);
+                    av_log(ctx, AV_LOG_WARNING,
+                           "Failed to enable MIGraphX (device %d): %s. MIGraphX requires ONNX Runtime 1.23 "
+                           "or later built with MIGraphX support, or a MIGraphX plugin execution provider "
+                           "set with ep_library. Falling back to CPU\n",
+                           ctx->device_id, msg);
+                    g_ort->ReleaseStatus(status);
+                } else {
+                    av_log(ctx, AV_LOG_INFO, "Using MIGraphX execution provider on device %d\n", ctx->device_id);
+                }
+            } else {
+                av_log(ctx, AV_LOG_WARNING,
+                       "MIGraphX provider function not available in this ONNX Runtime API version. Falling back to CPU\n");
+            }
         } else {
 #ifdef _WIN32
             av_log(ctx, AV_LOG_WARNING,
-                   "Unknown device '%s'. Supported: cpu, cuda, dml, vitisai. Using CPU\n",
+                   "Unknown device '%s'. Supported: cpu, cuda, dml, vitisai, migraphx. Using CPU\n",
                    ctx->device);
 #else
             av_log(ctx, AV_LOG_WARNING,
-                   "Unknown device '%s'. Supported: cpu, cuda, vitisai. Using CPU\n",
+                   "Unknown device '%s'. Supported: cpu, cuda, vitisai, migraphx. Using CPU\n",
                    ctx->device);
 #endif
         }

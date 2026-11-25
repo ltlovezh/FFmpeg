@@ -948,7 +948,7 @@ void ff_sws_op_desc(AVBPrint *bp, const SwsOp *op)
             break;
         const SwsFilterWeights *kernel = op->rw.filter.kernel;
         av_bprintf(bp, " + %d tap %s filter (%c)",
-                   kernel->filter_size, kernel->name,
+                   kernel->filter_size, ff_sws_scaler_name(kernel->scaler),
                    op->rw.filter.op == SWS_OP_FILTER_H ? 'H' : 'V');
         break;
     case SWS_OP_LSHIFT:
@@ -1013,7 +1013,7 @@ void ff_sws_op_desc(AVBPrint *bp, const SwsOp *op)
         const SwsFilterWeights *kernel = op->filter.kernel;
         av_bprintf(bp, "%-20s: %d -> %d %s (%d taps)", name,
                    kernel->src_size, kernel->dst_size,
-                   kernel->name, kernel->filter_size);
+                   ff_sws_scaler_name(kernel->scaler), kernel->filter_size);
         break;
     }
     case SWS_OP_LUT_3D:
@@ -1042,12 +1042,16 @@ void ff_sws_op_list_print(void *log, int lev, int lev_extra,
                           const SwsOpList *ops)
 {
     AVBPrint bpc, *bp = &bpc;
+    if (av_log_get_level() < lev)
+        return;
+
     if (!ops->num_ops) {
         av_log(log, lev, "  (empty)\n");
         return;
     }
 
     av_bprint_init(bp, 0, AV_BPRINT_SIZE_AUTOMATIC);
+    lev_extra = FFMAX(lev_extra, lev);
 
     for (int n = 0; n < ops->num_ops; n++) {
         const SwsOp *op = &ops->ops[n];

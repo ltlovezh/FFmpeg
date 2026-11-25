@@ -2,6 +2,39 @@ The last version increases of all libraries were on 2026-06-23.
 
 API changes, most recent first:
 
+2026-11-xx - xxxxxxxxxx - lavu 61.21.100 - cpu.h
+  Add AV_CPU_FLAG_AVXVNNI.
+
+2026-11-xx - xxxxxxxxxx - lavf 63.20.101 - avformat.h
+  With AVSEEK_FLAG_PREROLL set, avformat_seek_file() and av_seek_frame()
+  move the target back by the audio pre-roll, and discard the pre-roll
+  after the seek. Without it, a seek lands at the target.
+
+2026-11-xx - xxxxxxxxxx - lavf 63.20.100 - avformat.h
+  Add AVSEEK_FLAG_PREROLL, for avformat_seek_file() to move the target back
+  by the audio pre-roll.
+
+2026-11-xx - xxxxxxxxxx - lavf 63.19.100 - avformat.h
+  Add AVFormatContext.seek_flags.
+  Deprecate AVFormatContext.seek2any in favor of AVSEEK_FLAG_ANY in
+  AVFormatContext.seek_flags.
+
+2026-11-xx - xxxxxxxxxx - lavc 63.28.100 - packet.h
+  Add AV_PKT_FLAG_EOS.
+
+2026-11-xx - xxxxxxxxxx - lavc 63.27.100 - codec_id.h
+  Add AV_CODEC_ID_PCM_PAMF.
+
+2026-11-xx - xxxxxxxxxx - lavc 63.26.100 - defs.h
+  Add AV_PROFILE_CAVS_JIZHUN and AV_PROFILE_CAVS_BROADCASTING.
+
+2026-10-xx - xxxxxxxxxx - lavfi 12.12.100 - avfilter.h
+  Deprecate AVFilterGraph.max_buffered_frames in favor of
+  avfilter_graph_set_max_buffered_frames().
+
+2026-10-xx - xxxxxxxxxx - lavfi 12.11.100 - avfilter.h
+  Add avfilter_graph_set_max_buffered_frames().
+
 2026-10-xx - d19f86ff4c4 - lavf 63.14.102 - avformat.h
   After avformat_seek_file(), the first packet of an audio stream carries
   AV_PKT_DATA_SKIP_SAMPLES for the larger of the rest of the priming and the
@@ -12,6 +45,8 @@ API changes, most recent first:
   AVCodecParameters.seek_preroll of the audio streams, within the requested
   range. This also applies to av_seek_frame() with a demuxer that only
   implements read_seek2.
+
+-------- 8< --------- FFmpeg 9.1 was cut here -------- 8< ---------
 
 2026-10-xx - ad74ac4cee9 - lavc 63.23.102 - avcodec.h
   AVCodecContext.seek_preroll may be raised by a decoder to the pre-roll it

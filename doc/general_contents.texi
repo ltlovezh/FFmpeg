@@ -73,6 +73,22 @@ Initialization of amf encoder occurs in this order:
 2) trying to initialize through dx9(only windows)
 3) trying to initialize through vulkan
 
+An AMF device can also be derived from an existing Vulkan device. AMF requires the
+@code{VK_KHR_get_physical_device_properties2} and @code{VK_KHR_surface} instance
+extensions and the @code{VK_KHR_swapchain} device extension, which are not enabled
+by default; enable them through the Vulkan device options:
+@example
+ffmpeg -init_hw_device vulkan=vk,instance_extensions=VK_KHR_get_physical_device_properties2+VK_KHR_surface,device_extensions=VK_KHR_swapchain \
+       -init_hw_device amf=amf@@vk ...
+@end example
+If the Vulkan device uses custom queue lock callbacks, they must allow
+holding the locks of several queues at the same time; a single
+non-recursive mutex shared between queues cannot be used.
+Some AMF runtimes cannot use Vulkan devices whose queues were created with
+nonzero creation flags, such as internally synchronized queues; Vulkan devices
+with reduced queue counts (e.g. created with @code{limit_queues}) should not
+be used for derivation.
+
 To use h.264(AMD VCE) encoder on linux amdgru-pro version 19.20+ and amf-amdgpu-pro
 package(amdgru-pro contains, but does not install automatically) are required.
 
@@ -838,6 +854,7 @@ library:
 @item SoX native format         @tab X @tab X
 @item SUN AU format             @tab X @tab X
 @item SUP raw PGS subtitles     @tab X @tab X
+@item Super Audio CD (SACD)     @tab   @tab X
 @item SVAG                      @tab   @tab X
     @tab Audio format used in Konami PS2 games.
 @item TDSC                      @tab   @tab X
@@ -1011,6 +1028,8 @@ following image formats are supported:
 @item Apple QuickDraw        @tab     @tab  X
     @tab fourcc: qdrw
 @item APV                    @tab     @tab  X
+@item Argonaut Games Creature Shock video  @tab     @tab  X
+    @tab Video encoding used by the Creature Shock game.
 @item Argonaut Video         @tab     @tab  X
     @tab Used in some Argonaut games.
 @item Asus v1                @tab  X  @tab  X
@@ -1030,8 +1049,6 @@ following image formats are supported:
     @tab Supported through external libraries libaom, libdav1d, librav1e and libsvtav1
 @item Avid 1:1 10-bit RGB Packer  @tab  X  @tab  X
     @tab fourcc: AVrp
-@item AVS (Audio Video Standard) video  @tab     @tab  X
-    @tab Video encoding used by the Creature Shock game.
 @item AVS2-P2/IEEE1857.4     @tab  E  @tab  E
     @tab Supported through external libraries libxavs2 and libdavs2
 @item AVS3-P2/IEEE1857.10    @tab     @tab  E
@@ -1058,7 +1075,8 @@ following image formats are supported:
 @item CDXL                   @tab     @tab  X
     @tab Amiga CD video codec
 @item Chinese AVS video      @tab  E  @tab  X
-    @tab AVS1-P2, JiZhun profile, encoding through external library libxavs
+    @tab AVS1-P2/P16 (JiZhun and Broadcasting) decoding,
+          AVS1-P2 encoding through external library libxavs
 @item Delphine Software International CIN video  @tab     @tab  X
     @tab Codec used in Delphine Software International games.
 @item Discworld II BMV Video @tab     @tab  X
@@ -1492,6 +1510,7 @@ following image formats are supported:
 @item PCM signed 32-bit little-endian  @tab  X  @tab  X
 @item PCM signed 16/20/24-bit big-endian for DVD-Audio  @tab     @tab  X
 @item PCM signed 16/20/24-bit big-endian in MPEG-TS  @tab     @tab  X
+@item PCM signed 16/20/24-bit big-endian for PAMF streams  @tab     @tab  X
 @item PCM unsigned 8-bit     @tab  X  @tab  X
 @item PCM unsigned 16-bit big-endian  @tab  X  @tab  X
 @item PCM unsigned 16-bit little-endian  @tab  X  @tab  X

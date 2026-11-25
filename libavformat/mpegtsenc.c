@@ -33,6 +33,7 @@
 #include "libavcodec/defs.h"
 #include "libavcodec/h264.h"
 #include "libavcodec/hevc/hevc.h"
+#include "libavcodec/opus/tab.h"
 #include "libavcodec/vvc.h"
 #include "libavcodec/startcode.h"
 
@@ -757,7 +758,20 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
                        language++;
 
                    if (st->codecpar->extradata_size - extradata_copied >= 5) {
-                       *q++ = st->codecpar->extradata[extradata_copied + 4]; /* subtitling_type */
+                       /* subtitling_type: encoders are not aware of the hard
+                        * of hearing flag, so rederive it from the disposition:
+                        * 0x1x is a normal subtitle, 0x2x the same subtitle for
+                        * the hard of hearing. Only single-service records are
+                        * adjusted: the demuxer flags the whole stream as soon
+                        * as one of several services is for the hard of
+                        * hearing, so rewriting a multi-service record would
+                        * also change the type of the other services. */
+                       uint8_t subtitling_type = st->codecpar->extradata[extradata_copied + 4];
+                       if (st->codecpar->extradata_size == 5 &&
+                           (st->disposition & AV_DISPOSITION_HEARING_IMPAIRED) &&
+                           (subtitling_type & 0xF0) == 0x10)
+                           subtitling_type = 0x20 | (subtitling_type & 0x0F);
+                       *q++ = subtitling_type;
                        memcpy(q, st->codecpar->extradata + extradata_copied, 4); /* composition_page_id and ancillary_page_id */
                        extradata_copied += 5;
                        q += 4;
@@ -825,7 +839,8 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
             } else if (stream_type == STREAM_TYPE_VIDEO_CAVS || stream_type == STREAM_TYPE_VIDEO_AVS2 ||
                        stream_type == STREAM_TYPE_VIDEO_AVS3) {
                 put_registration_descriptor(&q, MKTAG('A', 'V', 'S', 'V'));
-            } else if (ts_st->nb_stream_groups) {
+            }
+            if (ts_st->nb_stream_groups) {
                 if (stream_type == STREAM_TYPE_VIDEO_LCEVC) {
                     LCEVCDecoderConfigurationRecord lvcc = { 0 };
                     ff_lcvec_parse_config_record(&lvcc, st->codecpar->extradata,
@@ -1327,7 +1342,9 @@ static int mpegts_init(AVFormatContext *s)
                 return ret;
         }
         if (st->codecpar->codec_id == AV_CODEC_ID_OPUS) {
-            ts_st->opus_pending_trim_start = st->codecpar->initial_padding * 48000 / st->codecpar->sample_rate;
+            ts_st->opus_pending_trim_start = st->codecpar->initial_padding *
+                                             OPUS_TIMESTAMP_RATE /
+                                             st->codecpar->sample_rate;
         }
     }
 
@@ -2207,7 +2224,8 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
                                                 &side_data_size);
 
             if (side_data && side_data_size >= 10) {
-                trim_end = AV_RL32(side_data + 4) * 48000 / st->codecpar->sample_rate;
+                trim_end = AV_RL32(side_data + 4) * OPUS_TIMESTAMP_RATE /
+                           st->codecpar->sample_rate;
             }
 
             if (pkt->size > INT_MAX - 7 - pkt->size / 255)
@@ -2439,6 +2457,7 @@ static int mpegts_check_bitstream(AVFormatContext *s, AVStream *st,
     } list[] = {
         { AV_CODEC_ID_H264, "h264_mp4toannexb", 0xff, 0x01 /* configurationVersion in AVCDecoderConfigurationRecord  */},
         { AV_CODEC_ID_HEVC, "hevc_mp4toannexb", 0xff, 0x01 /* configurationVersion in HEVCDecoderConfigurationRecord */},
+        { AV_CODEC_ID_LCEVC, "lcevc_metadata",  0xff, 0x01 /* configurationVersion in LCEVCDecoderConfigurationRecord */},
         { AV_CODEC_ID_VVC,  "vvc_mp4toannexb",  0xf8, 0xf8 /* reserved '11111'b    in VVCDecoderConfigurationRecord  */},
     };
 

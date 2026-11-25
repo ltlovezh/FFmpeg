@@ -65,7 +65,9 @@ typedef struct FFLCEVCFrame {
 
 int ff_lcevc_alloc(FFLCEVCContext **plcevc, AVDictionary **options, int loglevel);
 int ff_lcevc_process(void *logctx, struct AVFrame *frame);
+void ff_lcevc_flush(FFLCEVCContext *lcevc);
 int ff_lcevc_parse_frame(FFLCEVCContext *lcevc, const struct AVFrame *frame,
-                         enum AVPixelFormat *format, int *width, int *height);
+                         enum AVPixelFormat *format, enum AVPixelFormat *base_format,
+                         int *width, int *height);
 
 #endif /* AVCODEC_LCEVCDEC_H */

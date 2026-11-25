@@ -278,7 +278,7 @@ typedef struct VideoState {
     int frame_drops_late;
 
     enum ShowMode {
-        SHOW_MODE_NONE = -1, SHOW_MODE_VIDEO = 0, SHOW_MODE_WAVES, SHOW_MODE_RDFT, SHOW_MODE_NB
+        SHOW_MODE_NONE = -1, SHOW_MODE_VIDEO = 0, SHOW_MODE_WAVES, SHOW_MODE_RDFT, SHOW_MODE_PHASE, SHOW_MODE_NB
     } show_mode;
     int16_t sample_array[SAMPLE_ARRAY_SIZE];
     int sample_array_index;
@@ -1321,13 +1321,12 @@ static void video_audio_display(VideoState *s)
                         i -= SAMPLE_ARRAY_SIZE;
                 }
                 s->rdft_fn(s->rdft, data[ch], data_in[ch], sizeof(float));
-                data[ch][0].im = data[ch][nb_freq].re;
-                data[ch][nb_freq].re = 0;
             }
             /* Least efficient way to do this, we should of course
              * directly access it but it is more than fast enough. */
             if (!SDL_LockTexture(s->vis_texture, &rect, (void **)&pixels, &pitch)) {
                 double w = 1 / sqrt(nb_freq);
+                int show_phase = s->show_mode == SHOW_MODE_PHASE && nb_display_channels == 2;
                 pitch >>= 2;
                 pixels += pitch * s->height;
                 for (y = 0; y < s->height; y++) {
@@ -1336,8 +1335,18 @@ static void video_audio_display(VideoState *s)
                                                         : a;
                     a = FFMIN(a, 255);
                     b = FFMIN(b, 255);
+                    int blue = (a+b) >> 1;
+                    if (show_phase) {
+                        /* phase(left) - phase(right) in units of pi */
+                        double phase = atan2(data[0][y].im * data[1][y].re - data[0][y].re * data[1][y].im,
+                                             data[0][y].re * data[1][y].re + data[0][y].im * data[1][y].im) / M_PI;
+                        int phase_shift = lrint(phase * FFMIN(a, b));
+                        a    = FFMIN(a    - phase_shift / 2, 255);
+                        b    = FFMIN(b    - phase_shift / 2, 255);
+                        blue = FFMIN(blue + phase_shift,     255);
+                    }
                     pixels -= pitch;
-                    *pixels = (a << 16) + (b << 8) + ((a+b) >> 1);
+                    *pixels = (a << 16) + (b << 8) + blue;
                 }
                 SDL_UnlockTexture(s->vis_texture);
             }
@@ -3058,16 +3067,17 @@ static int stream_component_open(VideoState *is, int stream_index)
             goto fail;
 
         is->audio_stream = stream_index;
-        is->audio_st = ic->streams[stream_index];
 
         if ((ret = decoder_init(&is->auddec, avctx, &is->audioq, is->continue_read_thread)) < 0)
             goto fail;
         if (is->ic->iformat->flags & AVFMT_NOTIMESTAMPS) {
-            is->auddec.start_pts = is->audio_st->start_time;
-            is->auddec.start_pts_tb = is->audio_st->time_base;
+            is->auddec.start_pts = ic->streams[stream_index]->start_time;
+            is->auddec.start_pts_tb = ic->streams[stream_index]->time_base;
         }
         if (!SDL_AtomicGet(&is->replacement) && (ret = audio_start(is)) < 0)
             stream_component_close(is, stream_index);
+        else
+            is->audio_st = ic->streams[stream_index];
         break;
     case AVMEDIA_TYPE_VIDEO:
         is->video_stream = stream_index;
@@ -3103,6 +3113,27 @@ out:
     av_dict_free(&opts);
 
     return ret;
+}
+
+/**
+ * The largest pre-roll of the audio streams, in AV_TIME_BASE units. A seek
+ * with AVSEEK_FLAG_PREROLL lands that much before its target, but no lower
+ * than min_ts, and discards it in full from the first packet.
+ */
+static int64_t seek_preroll(const AVFormatContext *ic)
+{
+    int64_t preroll = 0;
+
+    for (unsigned i = 0; i < ic->nb_streams; i++) {
+        const AVCodecParameters *par = ic->streams[i]->codecpar;
+
+        if (par->codec_type == AVMEDIA_TYPE_AUDIO && par->seek_preroll > 0 &&
+            par->sample_rate > 0)
+            preroll = FFMAX(preroll, av_rescale_rnd(par->seek_preroll, AV_TIME_BASE,
+                                                    par->sample_rate, AV_ROUND_UP));
+    }
+
+    return preroll;
 }
 
 static int decode_interrupt_cb(void *ctx)
@@ -3240,6 +3271,7 @@ static int read_thread(void *arg)
     }
     ic->interrupt_callback.callback = decode_interrupt_cb;
     ic->interrupt_callback.opaque = is;
+    ic->seek_flags |= AVSEEK_FLAG_PREROLL;
     if ((ret = av_dict_copy(&format_options, format_opts, 0)) < 0)
         goto fail;
     if (!av_dict_get(format_options, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
@@ -3476,6 +3508,9 @@ static int read_thread(void *arg)
             int64_t seek_max    = is->seek_rel < 0 ? seek_target - is->seek_rel - 2: INT64_MAX;
 // FIXME the +-2 is due to rounding being not done in the correct direction in generation
 //      of the seek_pos/seek_rel variables
+            if (seek_min != INT64_MIN && !(is->seek_flags & AVSEEK_FLAG_BYTE) &&
+                (is->ic->seek_flags & AVSEEK_FLAG_PREROLL))
+                seek_min -= seek_preroll(is->ic);
 
             ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
             if (ret < 0) {
@@ -4358,7 +4393,8 @@ static int opt_show_mode(void *optctx, const char *opt, const char *arg)
 {
     show_mode = !strcmp(arg, "video") ? SHOW_MODE_VIDEO :
                 !strcmp(arg, "waves") ? SHOW_MODE_WAVES :
-                !strcmp(arg, "rdft" ) ? SHOW_MODE_RDFT  : SHOW_MODE_NONE;
+                !strcmp(arg, "rdft" ) ? SHOW_MODE_RDFT  :
+                !strcmp(arg, "phase") ? SHOW_MODE_PHASE : SHOW_MODE_NONE;
 
     if (show_mode == SHOW_MODE_NONE) {
         double num;
@@ -4454,7 +4490,7 @@ static const OptionDef options[] = {
     { "vf",                 OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT, { .func_arg = opt_add_vfilter }, "set video filters", "filter_graph" },
     { "af",                 OPT_TYPE_STRING,          0, { &afilters }, "set audio filters", "filter_graph" },
     { "rdftspeed",          OPT_TYPE_INT, OPT_AUDIO | OPT_EXPERT, { &rdftspeed }, "rdft speed", "msecs" },
-    { "showmode",           OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_show_mode}, "select show mode (0 = video, 1 = waves, 2 = RDFT)", "mode" },
+    { "showmode",           OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_show_mode}, "select show mode (0 = video, 1 = waves, 2 = RDFT, 3 = phase)", "mode" },
     { "i",                  OPT_TYPE_BOOL,            0, { &dummy}, "read specified file", "input_file"},
     { "codec",              OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_codec}, "force decoder", "decoder_name" },
     { "acodec",             OPT_TYPE_STRING, OPT_EXPERT, {    &audio_codec_name }, "force audio decoder",    "decoder_name" },

@@ -36,6 +36,11 @@ fate-cabac: libavcodec/tests/cabac$(EXESUF)
 fate-cabac: CMD = run libavcodec/tests/cabac$(EXESUF)
 fate-cabac: CMP = null
 
+FATE_LIBAVCODEC-$(CONFIG_CAVS_DECODER) += fate-cavsdsp
+fate-cavsdsp: libavcodec/tests/cavsdsp$(EXESUF)
+fate-cavsdsp: CMD = run libavcodec/tests/cavsdsp$(EXESUF)
+fate-cavsdsp: CMP = null
+
 FATE_LIBAVCODEC-$(CONFIG_CELP_MATH) += fate-celp_math
 fate-celp_math: libavcodec/tests/celp_math$(EXESUF)
 fate-celp_math: CMD = run libavcodec/tests/celp_math$(EXESUF)
@@ -55,6 +60,10 @@ FATE_LIBAVCODEC-$(CONFIG_DXV_ENCODER) += fate-hashtable
 fate-hashtable: libavcodec/tests/hashtable$(EXESUF)
 fate-hashtable: CMD = run libavcodec/tests/hashtable$(EXESUF)
 fate-hashtable: CMP = null
+
+FATE_LIBAVCODEC-$(CONFIG_ENCODERS) += fate-hw-base-encode
+fate-hw-base-encode: libavcodec/tests/hw_base_encode$(EXESUF)
+fate-hw-base-encode: CMD = run libavcodec/tests/hw_base_encode$(EXESUF)
 
 FATE_LIBAVCODEC-$(CONFIG_IDCTDSP) += fate-idct8x8-0 fate-idct8x8-1 fate-idct8x8-2 fate-idct248
 
@@ -133,6 +142,10 @@ $(FATE_SAMPLES_ENC_RECON-yes): tools/enc_recon_frame_test$(EXESUF)
 $(FATE_SAMPLES_ENC_RECON-yes): CMP = null
 FATE_EXTERN-yes += $(FATE_SAMPLES_ENC_RECON-yes)
 fate-enc-recon: $(FATE_SAMPLES_ENC_RECON-yes)
+
+FATE_LIBAVCODEC-$(CONFIG_QPFILE) += fate-qpfile-parser
+fate-qpfile-parser: libavcodec/tests/qpfile_parser$(EXESUF)
+fate-qpfile-parser: CMD = run libavcodec/tests/qpfile_parser$(EXESUF)
 
 FATE-$(CONFIG_AVCODEC) += $(FATE_LIBAVCODEC-yes)
 fate-libavcodec: $(FATE_LIBAVCODEC-yes)

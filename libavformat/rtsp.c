@@ -743,7 +743,7 @@ static void sdp_parse_line(AVFormatContext *s, SDPParseState *s1,
             if (s->nb_streams > 0) {
                 rtsp_st = rt->rtsp_streams[rt->nb_rtsp_streams - 1];
 
-                if (rt->server_type == RTSP_SERVER_REAL)
+                if (rt->server_type == RTSP_SERVER_REAL && rtsp_st->stream_index >= 0)
                     ff_real_parse_sdp_a_line(s, rtsp_st->stream_index, p);
 
                 if (rtsp_st->dynamic_handler &&
@@ -1481,6 +1481,8 @@ int ff_rtsp_send_cmd_with_content_async(AVFormatContext *s,
 
     if (!rt->rtsp_hd_out)
         return AVERROR(ENOTCONN);
+    if (strpbrk(url, "\r\n"))
+        return AVERROR(EINVAL);
 
     /* Add in RTSP headers */
     out_buf = buf;

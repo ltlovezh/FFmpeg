@@ -1120,6 +1120,8 @@ static int ljpeg_decode_rgb_scan(MJpegDecodeContext *s)
         if (s->rct || s->pegasus_rct)
             return AVERROR_INVALIDDATA;
     }
+    if ((s->rct || s->pegasus_rct) && nb_components != s->nb_components)
+        return AVERROR_INVALIDDATA;
 
     av_fast_malloc(&s->ljpeg_buffer, &s->ljpeg_buffer_size,
                    (unsigned)s->mb_width * 4 * sizeof(s->ljpeg_buffer[0][0]));
@@ -2797,6 +2799,14 @@ the_end:
             }
         }
     }
+    if (avctx->codec_id != AV_CODEC_ID_SMVJPEG &&
+        (avctx->codec_tag == MKTAG('A', 'V', 'R', 'n') ||
+         avctx->codec_tag == MKTAG('A', 'V', 'D', 'J')) &&
+        avctx->coded_height > s->orig_height) {
+        frame->height   = AV_CEIL_RSHIFT(avctx->coded_height, avctx->lowres);
+        frame->crop_top = frame->height - avctx->height;
+    }
+
     if (s->flipped && !s->rgb && !s->bayer) {
         ret = av_pix_fmt_get_chroma_sub_sample(avctx->pix_fmt, &hshift, &vshift);
         if (ret)
@@ -2919,14 +2929,6 @@ the_end:
         av_exif_free(&s->exif_metadata);
         if (ret < 0)
             av_log(avctx, AV_LOG_WARNING, "couldn't attach EXIF metadata\n");
-    }
-
-    if (avctx->codec_id != AV_CODEC_ID_SMVJPEG &&
-        (avctx->codec_tag == MKTAG('A', 'V', 'R', 'n') ||
-         avctx->codec_tag == MKTAG('A', 'V', 'D', 'J')) &&
-        avctx->coded_height > s->orig_height) {
-        frame->height   = AV_CEIL_RSHIFT(avctx->coded_height, avctx->lowres);
-        frame->crop_top = frame->height - avctx->height;
     }
 
 the_end_no_picture:

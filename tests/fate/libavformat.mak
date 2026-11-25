@@ -1,3 +1,11 @@
+FATE_LIBAVFORMAT += fate-codecstring
+fate-codecstring: libavformat/tests/codecstring$(EXESUF)
+fate-codecstring: CMD = run libavformat/tests/codecstring$(EXESUF)
+
+FATE_LIBAVFORMAT += fate-demux-probe
+fate-demux-probe: libavformat/tests/demux_probe$(EXESUF)
+fate-demux-probe: CMD = run libavformat/tests/demux_probe$(EXESUF)
+
 #FATE_LIBAVFORMAT-$(HAVE_PTHREADS) += fate-async
 #fate-async: libavformat/tests/async$(EXESUF)
 #fate-async: CMD = run libavformat/tests/async
@@ -52,9 +60,30 @@ FATE_LIBAVFORMAT-$(CONFIG_HTTP_PROTOCOL) += fate-http-status-line
 fate-http-status-line: libavformat/tests/http$(EXESUF)
 fate-http-status-line: CMD = run libavformat/tests/http$(EXESUF) $(FATE_HTTP_STATUS_LINES)
 
+FATE_LIBAVFORMAT-$(CONFIG_HTTP_PROTOCOL) += fate-httpcookie
+fate-httpcookie: libavformat/tests/httpcookie$(EXESUF)
+fate-httpcookie: CMD = run libavformat/tests/httpcookie$(EXESUF)
+
 FATE_LIBAVFORMAT-$(CONFIG_NETWORK) += fate-noproxy
 fate-noproxy: libavformat/tests/noproxy$(EXESUF)
 fate-noproxy: CMD = run libavformat/tests/noproxy$(EXESUF)
+
+# HEAD responses have no body, and CONNECT tunnels are unbounded streams.
+# Self-contained loopback test; it needs no samples and no external network.
+FATE_HTTP_NOBODY-$(CONFIG_HTTP_PROTOCOL)      += fate-http-head-no-body
+FATE_HTTP_NOBODY-$(CONFIG_HTTPPROXY_PROTOCOL) += fate-httpproxy-tunnel-eof
+FATE_HTTP_NOBODY-$(CONFIG_LIBCURL_PROTOCOL)   += fate-http-curl-head
+FATE_HTTP_NOBODY_RUN-$(HAVE_LOOPBACK)         += $(FATE_HTTP_NOBODY-yes)
+FATE_LIBAVFORMAT-$(HAVE_PTHREADS)             += $(FATE_HTTP_NOBODY_RUN-yes)
+
+fate-http-head-no-body: libavformat/tests/http_nobody$(EXESUF)
+fate-http-head-no-body: CMD = run libavformat/tests/http_nobody$(EXESUF) http
+
+fate-httpproxy-tunnel-eof: libavformat/tests/http_nobody$(EXESUF)
+fate-httpproxy-tunnel-eof: CMD = run libavformat/tests/http_nobody$(EXESUF) proxy
+
+fate-http-curl-head: libavformat/tests/http_nobody$(EXESUF)
+fate-http-curl-head: CMD = no_proxy=127.0.0.1,localhost NO_PROXY=127.0.0.1,localhost run libavformat/tests/http_nobody$(EXESUF) libcurl
 
 FATE_LIBAVFORMAT-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += fate-rtmpdh
 fate-rtmpdh: libavformat/tests/rtmpdh$(EXESUF)
@@ -72,57 +101,32 @@ FATE_LIBAVFORMAT-yes += fate-url
 fate-url: libavformat/tests/url$(EXESUF)
 fate-url: CMD = run libavformat/tests/url$(EXESUF)
 
-tests/data/hls-parse-master.m3u8: TAG = GEN
-tests/data/hls-parse-master.m3u8: | tests/data
-	$(Q)printf '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=64000\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=32000\nb.m3u8\n' > $@
+FATE_LIBAVFORMAT-$(call ALLYES, HLS_MUXER MP4_MUXER) += fate-hlsenc-filenames
+fate-hlsenc-filenames: libavformat/tests/hlsenc$(EXESUF)
+fate-hlsenc-filenames: CMD = run libavformat/tests/hlsenc$(EXESUF)
 
-tests/data/hls-parse-master-start.m3u8: TAG = GEN
-tests/data/hls-parse-master-start.m3u8: | tests/data
-	$(Q)printf '#EXTM3U\n#EXT-X-START:TIME-OFFSET=1.5\n#EXT-X-STREAM-INF:BANDWIDTH=64000\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=32000\nb.m3u8\n' > $@
-
-tests/data/hls-parse-media.m3u8: TAG = GEN
-tests/data/hls-parse-media.m3u8: | tests/data
-	$(Q)printf '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nseg1.ts\n#EXTINF:2,\nseg2.ts\n' > $@
-
-tests/data/hls-parse-media-start.m3u8: TAG = GEN
-tests/data/hls-parse-media-start.m3u8: | tests/data
-	$(Q)printf '#EXTM3U\n#EXT-X-START:TIME-OFFSET=4\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nseg1.ts\n#EXTINF:2,\nseg2.ts\n' > $@
-
-tests/data/hls-parse-media-start-endlist.m3u8: TAG = GEN
-tests/data/hls-parse-media-start-endlist.m3u8: | tests/data
-	$(Q)printf '#EXTM3U\n#EXT-X-START:TIME-OFFSET=4\n#EXT-X-ENDLIST\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nseg1.ts\n#EXTINF:2,\nseg2.ts\n' > $@
-
-FATE_HLS_PARSE = fate-hls-parse-media-start           \
-                 fate-hls-parse-media-start-endlist   \
-                 fate-hls-parse-master-start          \
-                 fate-hls-parse-master-start-media    \
-                 fate-hls-parse-master-start-override \
-                 fate-hls-parse-master-media-start
-
-$(FATE_HLS_PARSE): libavformat/tests/hls$(EXESUF)
-fate-hls-parse-media-start: tests/data/hls-parse-media-start.m3u8
-fate-hls-parse-media-start: CMD = run libavformat/tests/hls$(EXESUF) $(TARGET_PATH)/tests/data/hls-parse-media-start.m3u8
-fate-hls-parse-media-start-endlist: tests/data/hls-parse-media-start-endlist.m3u8
-fate-hls-parse-media-start-endlist: CMD = run libavformat/tests/hls$(EXESUF) $(TARGET_PATH)/tests/data/hls-parse-media-start-endlist.m3u8
-fate-hls-parse-master-start: tests/data/hls-parse-master-start.m3u8
-fate-hls-parse-master-start: CMD = run libavformat/tests/hls$(EXESUF) $(TARGET_PATH)/tests/data/hls-parse-master-start.m3u8
-fate-hls-parse-master-start-media: tests/data/hls-parse-master-start.m3u8 tests/data/hls-parse-media.m3u8
-fate-hls-parse-master-start-media: CMD = run libavformat/tests/hls$(EXESUF) $(TARGET_PATH)/tests/data/hls-parse-master-start.m3u8 $(TARGET_PATH)/tests/data/hls-parse-media.m3u8
-fate-hls-parse-master-start-override: tests/data/hls-parse-master-start.m3u8 tests/data/hls-parse-media-start.m3u8
-fate-hls-parse-master-start-override: CMD = run libavformat/tests/hls$(EXESUF) $(TARGET_PATH)/tests/data/hls-parse-master-start.m3u8 $(TARGET_PATH)/tests/data/hls-parse-media-start.m3u8
-fate-hls-parse-master-media-start: tests/data/hls-parse-master.m3u8 tests/data/hls-parse-media-start.m3u8
-fate-hls-parse-master-media-start: CMD = run libavformat/tests/hls$(EXESUF) $(TARGET_PATH)/tests/data/hls-parse-master.m3u8 $(TARGET_PATH)/tests/data/hls-parse-media-start.m3u8
-
-FATE_LIBAVFORMAT-$(call ALLYES, HLS_DEMUXER FILE_PROTOCOL) += $(FATE_HLS_PARSE)
+FATE_LIBAVFORMAT-$(call ALLYES, HLS_MUXER MP4_MUXER FILE_PROTOCOL) += fate-hlsenc-file-filenames
+fate-hlsenc-file-filenames: libavformat/tests/hlsenc$(EXESUF)
+fate-hlsenc-file-filenames: CMD = run libavformat/tests/hlsenc$(EXESUF) file
 
 FATE_LIBAVFORMAT-$(CONFIG_IMF_DEMUXER) += fate-imf
 fate-imf: libavformat/tests/imf$(EXESUF)
 fate-imf: CMD = run libavformat/tests/imf$(EXESUF)
 
+FATE_LIBAVFORMAT-$(CONFIG_MPEGTS_DEMUXER) += fate-mpegts-probe-pid
+fate-mpegts-probe-pid: libavformat/tests/mpegts_probe$(EXESUF)
+fate-mpegts-probe-pid: CMD = run libavformat/tests/mpegts_probe$(EXESUF)
+
 FATE_LIBAVFORMAT += fate-seek_utils
 fate-seek_utils: libavformat/tests/seek_utils$(EXESUF)
 fate-seek_utils: CMD = run libavformat/tests/seek_utils$(EXESUF)
 
+FATE_LIBAVFORMAT_SAMPLES-$(call ALLYES, AVFORMAT AC3_PARSER AC3_DECODER) += fate-parse-skip-samples
+fate-parse-skip-samples: libavformat/tests/parse_skip_samples$(EXESUF)
+fate-parse-skip-samples: CMD = run libavformat/tests/parse_skip_samples$(EXESUF) $(TARGET_SAMPLES)/ac3/millers_crossing_4.0.ac3
+
+FATE_EXTERN += $(FATE_LIBAVFORMAT_SAMPLES-yes)
+
 FATE_LIBAVFORMAT += $(FATE_LIBAVFORMAT-yes)
 FATE-$(CONFIG_AVFORMAT) += $(FATE_LIBAVFORMAT)
-fate-libavformat: $(FATE_LIBAVFORMAT)
+fate-libavformat: $(FATE_LIBAVFORMAT) $(if $(SAMPLES),$(FATE_LIBAVFORMAT_SAMPLES-yes))
